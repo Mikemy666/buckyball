@@ -124,6 +124,7 @@ add_cross_platform_test_target(ctest_bbfp_matmul_random1 bbfp_matmul_random1.c)
 add_cross_platform_test_target(ctest_bbfp_matmul_random2 bbfp_matmul_random2.c)
 add_cross_platform_test_target(ctest_bbfp_matmul_random3 bbfp_matmul_random3.c)
 add_cross_platform_test_target(ctest_transpose_test transpose_test.c)
+add_cross_platform_test_target(ctest_relu_test relu_test.c)
 add_cross_platform_test_target(ctest_transpose_matmul transpose_matmul.c)
 
 
@@ -157,6 +158,7 @@ add_custom_target(buckyball-CTest-build ALL DEPENDS
   ctest_bbfp_matmul_random2
   ctest_bbfp_matmul_random3
   ctest_transpose_test
+  ctest_relu_test
   ctest_transpose_matmul
   COMMENT "Building all workloads for Buckyball"
   VERBATIM)
