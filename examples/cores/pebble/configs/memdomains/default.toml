@@ -29,3 +29,17 @@ readWidth = 8
 
 [mem]
 addrLen = 39
+
+# PIVOT Section III-B: low-cost pressure-aware adaptive chunk prefetching.
+[prefetch]
+enable = true
+topK = 2
+descriptorDepth = 2
+monitorWidth = 4
+pressureWidth = 8
+scoreWidth = 12
+emaWidth = 8
+emaShift = 3
+coverageThreshold = 128
+accuracyThreshold = 128
+safetyMargin = 2

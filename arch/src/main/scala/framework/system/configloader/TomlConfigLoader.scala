@@ -6,7 +6,7 @@ import framework.system.core.configs.{CoreParam, RocketCoreParam}
 import framework.balldomain.configs.{BallDomainParam, BallISAEntry, BallIdMapping}
 import framework.frontend.configs.FrontendParam
 import framework.gpdomain.configs.GpDomainParam
-import framework.memdomain.configs.MemDomainParam
+import framework.memdomain.configs.{AdaptivePrefetchParam, MemDomainParam}
 import framework.top.GlobalConfig
 import framework.top.configs.TopConfig
 import java.nio.file.{Path, Paths}
@@ -413,12 +413,31 @@ object TomlConfigLoader {
   }
 
   private def parseMemDomainTable(table: Map[String, Value], shared: SharedMemFields): MemDomainParam = {
-    val bank = getTable(table, "bank").getOrElse(throw new RuntimeException("memdomain must define [bank]"))
-    val dma  = getTable(table, "dma").getOrElse(throw new RuntimeException("memdomain must define [dma]"))
-    val tlb  = getTable(table, "tlb").getOrElse(throw new RuntimeException("memdomain must define [tlb]"))
-    val tma  = getTable(table, "tma").getOrElse(throw new RuntimeException("memdomain must define [tma]"))
-    val mmio = getTable(table, "mmio").getOrElse(throw new RuntimeException("memdomain must define [mmio]"))
-    val mem  = getTable(table, "mem").getOrElse(throw new RuntimeException("memdomain must define [mem]"))
+    val bank             = getTable(table, "bank").getOrElse(throw new RuntimeException("memdomain must define [bank]"))
+    val dma              = getTable(table, "dma").getOrElse(throw new RuntimeException("memdomain must define [dma]"))
+    val tlb              = getTable(table, "tlb").getOrElse(throw new RuntimeException("memdomain must define [tlb]"))
+    val tma              = getTable(table, "tma").getOrElse(throw new RuntimeException("memdomain must define [tma]"))
+    val mmio             = getTable(table, "mmio").getOrElse(throw new RuntimeException("memdomain must define [mmio]"))
+    val mem              = getTable(table, "mem").getOrElse(throw new RuntimeException("memdomain must define [mem]"))
+    val prefetch         = getTable(table, "prefetch")
+    val prefetchDefaults = AdaptivePrefetchParam.disabled
+
+    def prefetchInt(key: String, default: Int): Int =
+      prefetch.flatMap(getOptionalInt(_, key)).getOrElse(default)
+
+    val adaptivePrefetch = AdaptivePrefetchParam(
+      enable = prefetch.flatMap(getOptionalBool(_, "enable")).getOrElse(false),
+      topK = prefetchInt("topK", prefetchDefaults.topK),
+      descriptorDepth = prefetchInt("descriptorDepth", prefetchDefaults.descriptorDepth),
+      monitorWidth = prefetchInt("monitorWidth", prefetchDefaults.monitorWidth),
+      pressureWidth = prefetchInt("pressureWidth", prefetchDefaults.pressureWidth),
+      scoreWidth = prefetchInt("scoreWidth", prefetchDefaults.scoreWidth),
+      emaWidth = prefetchInt("emaWidth", prefetchDefaults.emaWidth),
+      emaShift = prefetchInt("emaShift", prefetchDefaults.emaShift),
+      coverageThreshold = prefetchInt("coverageThreshold", prefetchDefaults.coverageThreshold),
+      accuracyThreshold = prefetchInt("accuracyThreshold", prefetchDefaults.accuracyThreshold),
+      safetyMargin = prefetchInt("safetyMargin", prefetchDefaults.safetyMargin)
+    )
 
     MemDomainParam(
       bankNum = getInt(bank, "num"),
@@ -442,7 +461,8 @@ object TomlConfigLoader {
       mmioBankNum = getInt(mmio, "bankNum"),
       mmioBankEntries = getInt(mmio, "bankEntries"),
       mmioBankWidth = getInt(mmio, "bankWidth"),
-      mmioReadWidth = getInt(mmio, "readWidth")
+      mmioReadWidth = getInt(mmio, "readWidth"),
+      adaptivePrefetch = adaptivePrefetch
     )
   }
 

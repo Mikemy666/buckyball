@@ -9,6 +9,7 @@ import freechips.rocketchip.rocket.MStatus
 import framework.balldomain.blink.BankWrite
 import chisel3.experimental.hierarchy.{instantiable, public}
 import framework.top.GlobalConfig
+import framework.memdomain.frontend.mem.prefetch.AdaptivePrefetchController
 
 @instantiable
 class MemLoader(val b: GlobalConfig) extends Module {
@@ -39,18 +40,22 @@ class MemLoader(val b: GlobalConfig) extends Module {
     val is_shared = Output(Bool())
   })
 
-  val s_idle :: s_dma_req :: s_dma_wait :: s_wait_write_resp :: s_done :: Nil = Enum(5)
-  val state                                                                   = RegInit(s_idle)
+  val s_idle :: s_prefetch_wait :: s_prefetch_delay :: s_dma_req :: s_dma_wait :: s_wait_write_resp :: s_done :: Nil =
+    Enum(7)
+  val state                                                                                                          = RegInit(s_idle)
 
-  val rob_id_reg     = RegInit(0.U(rob_id_width.W))
-  val is_sub_reg     = RegInit(false.B)
-  val sub_rob_id_reg = RegInit(0.U(log2Up(b.frontend.sub_rob_depth * 4).W))
-  val mem_addr_reg   = Reg(UInt(b.memDomain.memAddrLen.W))
-  val iter_reg       = Reg(UInt(b.frontend.iter_len.W))
-  val resp_count     = RegInit(0.U(log2Up(16).W))
-  val wr_bank_reg    = Reg(UInt(log2Up(b.memDomain.bankNum).W))
-  val stride_reg     = Reg(UInt(19.W))
-  val is_shared_reg  = RegInit(false.B)
+  val rob_id_reg         = RegInit(0.U(rob_id_width.W))
+  val is_sub_reg         = RegInit(false.B)
+  val sub_rob_id_reg     = RegInit(0.U(log2Up(b.frontend.sub_rob_depth * 4).W))
+  val mem_addr_reg       = Reg(UInt(b.memDomain.memAddrLen.W))
+  val iter_reg           = Reg(UInt(b.frontend.iter_len.W))
+  val resp_count         = RegInit(0.U(log2Up(16).W))
+  val wr_bank_reg        = Reg(UInt(log2Up(b.memDomain.bankNum).W))
+  val stride_reg         = Reg(UInt(19.W))
+  val is_shared_reg      = RegInit(false.B)
+  val selected_beats_reg = RegInit(0.U(b.frontend.iter_len.W))
+  val selected_group_reg = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
+  val prefetch_delay_reg = RegInit(0.U(5.W))
 
   // Group counter for multi-bank writes
   val group_counter   = RegInit(0.U(log2Up(b.memDomain.bankNum + 1).W))
@@ -76,11 +81,12 @@ class MemLoader(val b: GlobalConfig) extends Module {
   // -----------------------------
   // defaults
   // -----------------------------
-  io.cmdReq.ready := (state === s_idle)
+  val adaptiveCommandReady = WireDefault(true.B)
+  io.cmdReq.ready := (state === s_idle) && adaptiveCommandReady
 
   io.dmaReq.valid       := (state === s_dma_req)
   io.dmaReq.bits.vaddr  := mem_addr_reg
-  io.dmaReq.bits.len    := iter_reg * (b.memDomain.bankWidth / 8).U
+  io.dmaReq.bits.len    := selected_beats_reg * (b.memDomain.bankWidth / 8).U
   io.dmaReq.bits.status := 0.U.asTypeOf(new MStatus)
   io.dmaReq.bits.stride := stride_reg
   io.dmaReq.bits.groups := group_count_reg
@@ -97,10 +103,12 @@ class MemLoader(val b: GlobalConfig) extends Module {
   // IMPORTANT: always ready for write response (avoid deadlock)
   io.bankWrite.io.resp.ready := true.B
 
-  io.bankWrite.rob_id   := rob_id_reg
-  io.bankWrite.bank_id  := wr_bank_reg
-  io.bankWrite.ball_id  := 0.U
-  io.bankWrite.group_id := group_counter(log2Up(b.memDomain.bankNum) - 1, 0)
+  io.bankWrite.rob_id  := rob_id_reg
+  io.bankWrite.bank_id := wr_bank_reg
+  io.bankWrite.ball_id := 0.U
+  val selectedGroupSum = group_counter +& selected_group_reg
+  val wrappedGroup     = Mux(selectedGroupSum >= group_count_reg, selectedGroupSum - group_count_reg, selectedGroupSum)
+  io.bankWrite.group_id := wrappedGroup(log2Up(b.memDomain.bankNum) - 1, 0)
   io.is_shared          := is_shared_reg
 
   // cmdResp (Decoupled): hold valid until accepted
@@ -114,32 +122,86 @@ class MemLoader(val b: GlobalConfig) extends Module {
   // Receive load instruction (both mvin and mvin_mmio go through is_load path)
   // -----------------------------
   when(io.cmdReq.fire && io.cmdReq.bits.cmd.is_load) {
-    state          := s_dma_req
-    rob_id_reg     := io.cmdReq.bits.rob_id
-    is_sub_reg     := io.cmdReq.bits.is_sub
-    sub_rob_id_reg := io.cmdReq.bits.sub_rob_id
-    mem_addr_reg   := io.cmdReq.bits.cmd.mem_addr
-    wr_bank_reg    := io.cmdReq.bits.cmd.bank_id
-    resp_count     := 0.U
-    pending        := false.B
-    latLast        := false.B
-    group_counter  := 0.U
-    is_shared_reg  := io.cmdReq.bits.cmd.is_shared
+    state              := Mux(
+      b.memDomain.adaptivePrefetch.enable.B && !io.cmdReq.bits.cmd.is_mvin_mmio,
+      s_prefetch_wait,
+      s_dma_req
+    )
+    rob_id_reg         := io.cmdReq.bits.rob_id
+    is_sub_reg         := io.cmdReq.bits.is_sub
+    sub_rob_id_reg     := io.cmdReq.bits.sub_rob_id
+    mem_addr_reg       := io.cmdReq.bits.cmd.mem_addr
+    wr_bank_reg        := io.cmdReq.bits.cmd.bank_id
+    resp_count         := 0.U
+    pending            := false.B
+    latLast            := false.B
+    group_counter      := 0.U
+    is_shared_reg      := io.cmdReq.bits.cmd.is_shared
+    selected_group_reg := 0.U
+    prefetch_delay_reg := 0.U
 
     // Latch mvin_mmio routing info (exposed to upper level via is_mvin_mmio_active)
     is_mvin_mmio_reg := io.cmdReq.bits.cmd.is_mvin_mmio
     when(io.cmdReq.bits.cmd.is_mvin_mmio) {
       // mvin_mmio: rs1[63:30]=row (iter), rs2[55:39]=mmio_addr, rs2[63:56]=col
-      mmio_addr_reg   := io.cmdReq.bits.cmd.special(55, 39)
-      mmio_col_reg    := io.cmdReq.bits.cmd.special(63, 56)
-      iter_reg        := io.cmdReq.bits.cmd.iter
-      group_count_reg := 1.U
-      stride_reg      := 1.U
+      mmio_addr_reg      := io.cmdReq.bits.cmd.special(55, 39)
+      mmio_col_reg       := io.cmdReq.bits.cmd.special(63, 56)
+      iter_reg           := io.cmdReq.bits.cmd.iter
+      selected_beats_reg := io.cmdReq.bits.cmd.iter
+      group_count_reg    := 1.U
+      stride_reg         := 1.U
     }.otherwise {
       // Regular mvin: stride from rs2[57:39]
-      stride_reg      := io.cmdReq.bits.cmd.special(57, 39)
-      group_count_reg := io.query_group_count
-      iter_reg        := io.cmdReq.bits.cmd.iter * io.query_group_count
+      stride_reg         := io.cmdReq.bits.cmd.special(57, 39)
+      group_count_reg    := io.query_group_count
+      iter_reg           := io.cmdReq.bits.cmd.iter * io.query_group_count
+      selected_beats_reg := io.cmdReq.bits.cmd.iter * io.query_group_count
+    }
+  }
+
+  if (b.memDomain.adaptivePrefetch.enable) {
+    val adaptive            = Module(new AdaptivePrefetchController(b))
+    val incomingRegularLoad = state === s_idle && io.cmdReq.valid && io.cmdReq.bits.cmd.is_load &&
+      !io.cmdReq.bits.cmd.is_mvin_mmio
+    val incomingGroups      = Mux(io.query_group_count === 0.U, 1.U, io.query_group_count)
+    val eligibleWide        = (1.U((b.memDomain.bankNum + 1).W) << incomingGroups) - 1.U
+
+    adaptive.io.descriptor.valid             := incomingRegularLoad
+    adaptive.io.descriptor.bits.descriptorId := io.cmdReq.bits.rob_id
+    adaptive.io.descriptor.bits.address      := io.cmdReq.bits.cmd.mem_addr
+    adaptive.io.descriptor.bits.beats        := io.cmdReq.bits.cmd.iter * incomingGroups
+    adaptive.io.descriptor.bits.chunkMask    := "b1111".U
+    adaptive.io.descriptor.bits.windowMask   := "b1111".U
+    adaptive.io.descriptor.bits.eligibleMask := eligibleWide(b.memDomain.bankNum - 1, 0)
+    adaptiveCommandReady                     := !incomingRegularLoad || adaptive.io.descriptor.ready
+
+    adaptive.io.bankActivityValid   := io.bankWrite.io.req.fire
+    adaptive.io.bankActivityGroup   := io.bankWrite.group_id
+    adaptive.io.bankConflict        := io.bankWrite.io.req.valid && !io.bankWrite.io.req.ready
+    adaptive.io.residencyValid      := io.bankWrite.io.resp.fire
+    adaptive.io.residencyGroup      := io.bankWrite.group_id
+    adaptive.io.coverageSampleValid := io.dmaReq.fire
+    adaptive.io.coverageSample      := true.B
+    adaptive.io.accuracySampleValid := io.cmdResp.fire
+    adaptive.io.accuracySample      := true.B
+
+    adaptive.io.decision.ready := state === s_prefetch_wait
+    when(state === s_prefetch_wait && adaptive.io.decision.fire) {
+      selected_beats_reg := adaptive.io.decision.bits.beats
+      selected_group_reg := adaptive.io.decision.bits.group
+      prefetch_delay_reg := (1.U << adaptive.io.decision.bits.windowIdx)
+      state              := s_prefetch_delay
+    }
+    when(state === s_prefetch_wait && adaptive.io.suppressed) {
+      state := s_done
+    }
+    when(state === s_prefetch_delay) {
+      when(prefetch_delay_reg <= 1.U) {
+        prefetch_delay_reg := 0.U
+        state              := s_dma_req
+      }.otherwise {
+        prefetch_delay_reg := prefetch_delay_reg - 1.U
+      }
     }
   }
 

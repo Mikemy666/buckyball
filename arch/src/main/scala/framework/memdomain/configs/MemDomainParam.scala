@@ -2,6 +2,38 @@ package framework.memdomain.configs
 
 import upickle.default._
 
+case class AdaptivePrefetchParam(
+  enable:            Boolean,
+  topK:              Int,
+  descriptorDepth:   Int,
+  monitorWidth:      Int,
+  pressureWidth:     Int,
+  scoreWidth:        Int,
+  emaWidth:          Int,
+  emaShift:          Int,
+  coverageThreshold: Int,
+  accuracyThreshold: Int,
+  safetyMargin:      Int)
+
+object AdaptivePrefetchParam {
+  implicit val rw: ReadWriter[AdaptivePrefetchParam] = macroRW
+
+  def disabled: AdaptivePrefetchParam = AdaptivePrefetchParam(
+    enable = false,
+    topK = 2,
+    descriptorDepth = 2,
+    monitorWidth = 4,
+    pressureWidth = 8,
+    scoreWidth = 12,
+    emaWidth = 8,
+    emaShift = 3,
+    coverageThreshold = 128,
+    accuracyThreshold = 128,
+    safetyMargin = 2
+  )
+
+}
+
 /**
  * MemDomain Parameter
  *
@@ -31,7 +63,8 @@ case class MemDomainParam(
   mmioBankNum:             Int,
   mmioBankEntries:         Int,
   mmioBankWidth:           Int,
-  mmioReadWidth:           Int) {
+  mmioReadWidth:           Int,
+  adaptivePrefetch:        AdaptivePrefetchParam) {
 
   // MMIO derived values
   val mmioBankBytes:  Int = mmioBankEntries * (mmioBankWidth / 8)
@@ -64,7 +97,8 @@ object MemDomainParam {
     mmioBankNum = 0,
     mmioBankEntries = 0,
     mmioBankWidth = 0,
-    mmioReadWidth = 0
+    mmioReadWidth = 0,
+    adaptivePrefetch = AdaptivePrefetchParam.disabled
   )
 
 }
