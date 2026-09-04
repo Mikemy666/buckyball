@@ -1,0 +1,71 @@
+diff --git a/ip/smic180/compiler.py b/ip/smic180/compiler.py
+index b1819c0..2c973cd 100644
+--- a/ip/smic180/compiler.py
++++ b/ip/smic180/compiler.py
+@@ -4,8 +4,28 @@ import subprocess
+ import time
+ from pathlib import Path
+ 
+-CDK = Path("/home/bb-runner/Code/eda/D_libraries/SMIC180/SRAM/S018SP_v0p1pc_CDK")
+-JAR = CDK / "S018SP.jar"
++DEFAULT_CDK = Path("/home/bb-runner/Code/eda/D_libraries/SMIC180/SRAM/S018SP_v0p1pc_CDK")
++
++
++def resolve_cdk() -> Path:
++    candidates = []
++    if os.environ.get("S018SP_CDK"):
++        candidates.append(Path(os.environ["S018SP_CDK"]).expanduser())
++    if os.environ.get("SMIC180_ROOT"):
++        candidates.append(
++            Path(os.environ["SMIC180_ROOT"]).expanduser()
++            / "SRAM"
++            / "S018SP_v0p1pc_CDK"
++        )
++    candidates.append(DEFAULT_CDK)
++    for candidate in candidates:
++        if candidate.is_dir() and (candidate / "S018SP.jar").is_file():
++            return candidate.resolve()
++    checked = ", ".join(str(path) for path in candidates)
++    raise FileNotFoundError(
++        "SMIC180 SRAM compiler not found; set S018SP_CDK to the directory "
++        f"containing S018SP.jar (checked: {checked})"
++    )
+ 
+ CORNERS = {
+     "ss": "ss_1.62_125",
+@@ -66,6 +86,8 @@ def generate_smic180_sram_dbs(geoms, corner, cache_dir, lc_shell):
+     if not Path(java).is_file():
+         raise RuntimeError(f"missing S018SP_JAVA: {java}")
+     tag = resolve_corner(corner)
++    cdk = resolve_cdk()
++    jar = cdk / "S018SP.jar"
+     cache_dir = Path(cache_dir)
+     dbs = []
+     xvfb_proc = None
+@@ -84,7 +106,7 @@ def generate_smic180_sram_dbs(geoms, corner, cache_dir, lc_shell):
+                 env = os.environ.copy()
+                 env.pop("JAVA_TOOL_OPTIONS", None)
+                 env.pop("_JAVA_OPTIONS", None)
+-                env["MC_INSTALL_PATH"] = str(CDK)
++                env["MC_INSTALL_PATH"] = str(cdk)
+                 env["DISPLAY"] = display
+                 env["JAVA_HOME"] = str(Path(java).resolve().parent.parent)
+             leaf.mkdir(parents=True, exist_ok=True)
+@@ -93,7 +115,7 @@ def generate_smic180_sram_dbs(geoms, corner, cache_dir, lc_shell):
+                     java,
+                     "-Djava.awt.headless=false",
+                     "-jar",
+-                    str(JAR),
++                    str(jar),
+                     "-instname",
+                     g.name,
+                     "-words",
+@@ -109,7 +131,7 @@ def generate_smic180_sram_dbs(geoms, corner, cache_dir, lc_shell):
+                     "-savepath",
+                     str(leaf),
+                 ],
+-                cwd=str(CDK),
++                cwd=str(cdk),
+                 env=env,
+                 capture_output=True,
+                 text=True,

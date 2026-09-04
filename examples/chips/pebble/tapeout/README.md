@@ -25,6 +25,19 @@ export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 ./bbdev/bbdev dc --power '--chip pebble'
 ```
 
+The proprietary SMIC180 SRAM compiler is not distributed with this repository.
+Its directory must contain `S018SP.jar` and the accompanying CDK files. The
+one-command wrapper accepts its installation path without relying on the
+original `bb-runner` home directory:
+
+```bash
+./examples/chips/pebble/tapeout/power/run_pivot_power.sh \
+  --sram-cdk /path/to/S018SP_v0p1pc_CDK
+```
+
+Equivalently, export `S018SP_CDK`; `SMIC180_ROOT` is also supported when the CDK
+is installed at `$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK`.
+
 The default activity workload is
 `pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT
 adaptive prefetch path and uses the configured 1--5 ms VCD activity window.

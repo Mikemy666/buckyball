@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: run_pivot_power.sh [--skip-build] [--workload NAME]
+usage: run_pivot_power.sh [--skip-build] [--sram-cdk DIR] [--workload NAME]
                           [--start-ns NS --end-ns NS]
 
 Run the Pebble PIVOT DC -> gate-level VCS -> PrimeTime PX power flow.
@@ -13,12 +13,14 @@ EOF
 }
 
 skip_build=0
+sram_cdk=""
 workload=""
 start_ns=""
 end_ns=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) skip_build=1; shift ;;
+    --sram-cdk) sram_cdk="${2:?--sram-cdk requires a directory}"; shift 2 ;;
     --workload) workload="${2:?--workload requires a built ELF name}"; shift 2 ;;
     --start-ns) start_ns="${2:?--start-ns requires a value}"; shift 2 ;;
     --end-ns) end_ns="${2:?--end-ns requires a value}"; shift 2 ;;
@@ -36,11 +38,53 @@ fi
 
 ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
 BBDEV="$ROOT/bbdev/bbdev"
+SOC_FRAMEWORK="$ROOT/thirdparty/soc-framework"
+CDK_PATCH="$ROOT/examples/chips/pebble/tapeout/power/patches/soc-framework-s018sp-cdk-env.patch"
 
 # Motia workers use a local WebSocket. Do not send it through a configured
 # corporate/Codex HTTP proxy.
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
+
+if [[ -n "$sram_cdk" ]]; then
+  export S018SP_CDK="$sram_cdk"
+elif [[ -z "${S018SP_CDK:-}" && -n "${SMIC180_ROOT:-}" ]]; then
+  export S018SP_CDK="$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK"
+fi
+if [[ -z "${S018SP_CDK:-}" ]]; then
+  default_cdk=/home/bb-runner/Code/eda/D_libraries/SMIC180/SRAM/S018SP_v0p1pc_CDK
+  if [[ -f "$default_cdk/S018SP.jar" ]]; then
+    export S018SP_CDK="$default_cdk"
+  else
+    echo "missing SMIC180 SRAM compiler; pass --sram-cdk DIR or export S018SP_CDK" >&2
+    echo "DIR must contain S018SP.jar and the accompanying S018SP CDK files" >&2
+    exit 2
+  fi
+fi
+if [[ ! -d "$S018SP_CDK" || ! -f "$S018SP_CDK/S018SP.jar" ]]; then
+  echo "invalid S018SP_CDK (S018SP.jar not found): $S018SP_CDK" >&2
+  exit 2
+fi
+
+# soc-framework is an independently versioned submodule. Its pinned revision
+# hard-codes the original bb-runner CDK path, so apply the parent-owned,
+# temporary compatibility patch for this run and restore the checkout on exit.
+cdk_patch_applied=0
+restore_soc_framework() {
+  if (( cdk_patch_applied )); then
+    git -C "$SOC_FRAMEWORK" apply --reverse "$CDK_PATCH" || \
+      echo "warning: could not restore the soc-framework compatibility patch" >&2
+  fi
+}
+trap restore_soc_framework EXIT
+if ! grep -q 'os\.environ\["S018SP_CDK"\]' "$SOC_FRAMEWORK/ip/smic180/compiler.py"; then
+  if ! git -C "$SOC_FRAMEWORK" apply --check "$CDK_PATCH"; then
+    echo "cannot apply S018SP_CDK compatibility patch to soc-framework" >&2
+    exit 2
+  fi
+  git -C "$SOC_FRAMEWORK" apply "$CDK_PATCH"
+  cdk_patch_applied=1
+fi
 
 missing=0
 for tool in dc_shell vcs pt_shell; do
