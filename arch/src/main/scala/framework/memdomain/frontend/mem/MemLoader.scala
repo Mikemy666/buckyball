@@ -207,13 +207,20 @@ class MemLoader(val b: GlobalConfig) extends Module {
       state := s_prefetch_wait
     }
     when(state === s_prefetch_wait && adaptive.io.decision.fire) {
-      selected_beats_reg := adaptive.io.decision.bits.beats
-      selected_group_reg := adaptive.io.decision.bits.group
+      // This path services an architecturally visible mvin, not a speculative
+      // request.  The adaptive policy may choose when to launch it, but must
+      // not truncate the transfer or rotate its destination groups.
+      selected_beats_reg := iter_reg
+      selected_group_reg := 0.U
       prefetch_delay_reg := 1.U << adaptive.io.decision.bits.windowIdx
       state              := s_prefetch_delay
     }
     when(state === s_prefetch_wait && adaptive.io.suppressed) {
-      state := s_done
+      // Suppressing a speculative prefetch is legal; dropping an explicit
+      // mvin is not.  Fall back to the complete demand transfer.
+      selected_beats_reg := iter_reg
+      selected_group_reg := 0.U
+      state              := s_dma_req
     }
     when(state === s_prefetch_delay) {
       when(prefetch_delay_reg <= 1.U) {

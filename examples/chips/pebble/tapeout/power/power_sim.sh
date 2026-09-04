@@ -19,6 +19,24 @@ MEM_CONF="$RTL_DIR/mems.conf"
 BUILD="$OUTPUT_DIR/gate-vcs"
 mkdir -p "$BUILD"
 if [[ ! -f "$MEM_CONF" ]]; then echo "missing FIRRTL memory manifest: $MEM_CONF" >&2; exit 2; fi
+
+# Older bbdev releases do not export TARGET_LIBRARY to the simulation
+# environment. Resolve it from the chip-owned contract so this script works
+# both through `bbdev dc --power` and when invoked directly for debugging.
+if [[ -z "${TARGET_LIBRARY:-}" ]]; then
+  TARGET_LIBRARY=$(python3 - "$ROOT/examples/chips/pebble/tapeout/config.toml" <<'PY'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as handle:
+    print(tomllib.load(handle)["tapeout"]["target_library"])
+PY
+  )
+fi
+if [[ ! -f "$TARGET_LIBRARY" ]]; then
+  echo "missing target Liberty database: $TARGET_LIBRARY" >&2
+  exit 2
+fi
 python3 "$ROOT/bbdev/api/steps/dc/scripts/emit_seq_mem_models.py" --mem-conf "$MEM_CONF" --output "$BUILD/seq_mem_models.sv"
 
 cat > "$BUILD/GatePowerHarness.sv" <<'SV'
@@ -66,7 +84,7 @@ module GatePowerHarness;
 endmodule
 SV
 
-CELL_MODEL="$(dirname "$(dirname "$(dirname "${TARGET_LIBRARY:?missing TARGET_LIBRARY}" )")")/verilog/scc018ug_uhd_rvt.v"
+CELL_MODEL="$(dirname "$(dirname "$(dirname "$TARGET_LIBRARY")")")/verilog/scc018ug_uhd_rvt.v"
 if [[ ! -f "$CELL_MODEL" ]]; then echo "missing standard-cell Verilog model: $CELL_MODEL" >&2; exit 2; fi
 
 VCS_CMD=(vcs -full64 -sverilog -timescale=1ns/1ps -top GatePowerHarness -debug_access+all -hsopt=off -Mdir="$BUILD/csrc" -o "$BUILD/simv" -l "$BUILD/compile.log" -CFLAGS "-std=c++17 -I$ROOT/result/include -I$RTL_DIR -I$ROOT/arch/src/csrc/include" -LDFLAGS "-ldramsim3 -lz -lstdc++ -L$ROOT/result/lib -Wl,-rpath,$ROOT/result/lib")

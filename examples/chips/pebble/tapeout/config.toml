@@ -13,6 +13,7 @@ max_cores = 32
 power_format = "vcd"
 power_start_ns = "1000000"
 power_end_ns = "5000000"
+power_workload = "pebble-pebble-ctest-mega_conv_pipeline_test-baremetal"
 dc_script = "area/dc.tcl"
 power_script = "power/power.tcl"
 power_sim_script = "power/power_sim.sh"

@@ -8,3 +8,41 @@ Layout:
 
 `bbdev dc` resolves paths from `config.toml` and injects `RUN_*`. Timing truth is
 `area/constraints.sdc`. Pebble main clock is 100 MHz (`10 ns`).
+
+## PIVOT power validation
+
+Run from the repository root after entering a host environment containing
+licensed `dc_shell`, `vcs`, and `pt_shell` executables. The one-time compiler
+build is required because the workload CMake configuration consumes the
+chip-specific Buddy CMake cache, including for C-only tests:
+
+```bash
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
+export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
+./bbdev/bbdev config --install
+./bbdev/bbdev compiler --build '--chip pebble'
+./bbdev/bbdev workload --build '--chip pebble --ctest'
+./bbdev/bbdev dc --power '--chip pebble'
+```
+
+The default activity workload is
+`pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT
+adaptive prefetch path and uses the configured 1--5 ms VCD activity window.
+Override it or shorten the smoke-test window when needed:
+
+```bash
+./bbdev/bbdev dc --power '--chip pebble --workload <built-ELF-name> --start-ns 100000 --end-ns 300000'
+```
+
+Reports are written below the newest
+`log/<timestamp>/pebble/tapeout/<date>/dc/power/` directory. The primary result
+is `power-reports/power_total.rpt`; use `power_hierarchy_sorted.rpt` to locate
+the largest dynamic-power contributors. SRAM activity is linked with the SRAM
+Liberty databases produced by the preceding DC stage. DRAM power remains a
+separate DRAMSim3 result and is not included in the PrimeTime cell-power total.
+
+The same sequence, including prerequisite and proxy checks, is available as:
+
+```bash
+./examples/chips/pebble/tapeout/power/run_pivot_power.sh
+```
