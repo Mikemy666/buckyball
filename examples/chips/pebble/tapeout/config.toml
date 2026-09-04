@@ -3,10 +3,10 @@ top = "DigitalTop"
 sram_process = "smic180"
 sram_mdf = "ip/smic180_sram_library.mdf.json"
 constraints_sdc = "area/constraints.sdc"
-target_library = "/home/bb-runner/Code/eda/D_libraries/SMIC180/SCC018UG_UHD_RVT_V0.4a/SCC018UG_UHD_RVT_V0p4a/liberty/1.8v/scc018ug_uhd_rvt_ss_v1p62_125c_ccs.db"
+target_library = "/data2/smic180/SCC018UG_UHD_RVT_V0.4a/SCC018UG_UHD_RVT_V0p4a/liberty/1.8v/scc018ug_uhd_rvt_ss_v1p62_125c_ccs.db"
 synthetic_library = [
-  "/home/bb-runner/Code/eda/A_packages/tools/syn/R-2020.09-SP5/libraries/syn/dw_foundation.sldb",
-  "/home/bb-runner/Code/eda/A_packages/tools/syn/R-2020.09-SP5/libraries/syn/standard.sldb",
+  "/data0/tools/Synopsys/dc/syn/W-2024.09-SP1/libraries/syn/dw_foundation.sldb",
+  "/data0/tools/Synopsys/dc/syn/W-2024.09-SP1/libraries/syn/standard.sldb",
 ]
 link_library = []
 max_cores = 32
@@ -20,7 +20,10 @@ power_sim_script = "power/power_sim.sh"
 power_strip_path = "GatePowerHarness.dut"
 
 sram_corner = "ss"
-lc_shell = "/home/bb-runner/Code/eda/A_packages/tools/lc/R-2020.09-SP5/bin/lc_shell"
+# The installed R-2020.09 Library Compiler requires pre-glibc-2.34 pthread
+# internals. Current Design Compiler supports the same read_lib/write_lib Tcl
+# used by the SRAM DB generator and runs on this host.
+lc_shell = "/data0/tools/Synopsys/dc/syn/W-2024.09-SP1/bin/dc_shell"
 
 [[tapeout.sram]]
 name = "chipyard_sram_32x128"

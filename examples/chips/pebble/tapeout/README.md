@@ -27,8 +27,8 @@ export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
 The proprietary SMIC180 SRAM compiler is not distributed with this repository.
 Its directory must contain `S018SP.jar` and the accompanying CDK files. The
-one-command wrapper accepts its installation path without relying on the
-original `bb-runner` home directory:
+wrapper automatically uses this host's installation at
+`/data2/smic180/SRAM/S018SP_v0p1pc_CDK`, or accepts another installation path:
 
 ```bash
 ./examples/chips/pebble/tapeout/power/run_pivot_power.sh \
@@ -37,6 +37,10 @@ original `bb-runner` home directory:
 
 Equivalently, export `S018SP_CDK`; `SMIC180_ROOT` is also supported when the CDK
 is installed at `$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK`.
+
+The flow uses the W-2024.09-SP1 `dc_shell` for SRAM Liberty-to-DB conversion as
+well as synthesis. The older R-2020.09-SP5 `lc_shell` installed on this host is
+not compatible with the host's glibc 2.35.
 
 The default activity workload is
 `pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT

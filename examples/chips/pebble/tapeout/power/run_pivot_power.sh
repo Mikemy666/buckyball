@@ -41,6 +41,16 @@ BBDEV="$ROOT/bbdev/bbdev"
 SOC_FRAMEWORK="$ROOT/thirdparty/soc-framework"
 CDK_PATCH="$ROOT/examples/chips/pebble/tapeout/power/patches/soc-framework-s018sp-cdk-env.patch"
 
+# Host EDA installation used by the PIVOT branch. Keep caller-provided values,
+# but make the checked host installation usable from inside `nix develop`.
+DC_HOME="${DC_HOME:-/data0/tools/Synopsys/dc/syn/W-2024.09-SP1}"
+VCS_HOME="${VCS_HOME:-/data0/tools/Synopsys/vcs/vcs/W-2024.09-SP1}"
+PT_HOME="${PT_HOME:-/data0/tools/Synopsys/ptpx/prime/W-2024.09-SP1}"
+export DC_HOME VCS_HOME PT_HOME
+export SNPSLMD_LICENSE_FILE="${SNPSLMD_LICENSE_FILE:-27000@amax}"
+export LM_LICENSE_FILE="${LM_LICENSE_FILE:-/data0/tools/Synopsys/lic/Synopsys.dat}"
+export PATH="$DC_HOME/bin:$VCS_HOME/bin:$PT_HOME/bin:$PATH"
+
 # Motia workers use a local WebSocket. Do not send it through a configured
 # corporate/Codex HTTP proxy.
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
@@ -52,7 +62,7 @@ elif [[ -z "${S018SP_CDK:-}" && -n "${SMIC180_ROOT:-}" ]]; then
   export S018SP_CDK="$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK"
 fi
 if [[ -z "${S018SP_CDK:-}" ]]; then
-  default_cdk=/home/bb-runner/Code/eda/D_libraries/SMIC180/SRAM/S018SP_v0p1pc_CDK
+  default_cdk=/data2/smic180/SRAM/S018SP_v0p1pc_CDK
   if [[ -f "$default_cdk/S018SP.jar" ]]; then
     export S018SP_CDK="$default_cdk"
   else
