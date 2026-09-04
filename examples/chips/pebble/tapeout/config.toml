@@ -20,7 +20,7 @@ power_sim_script = "power/power_sim.sh"
 power_strip_path = "GatePowerHarness.dut"
 
 sram_corner = "ss"
-lc_shell = "/data2/tools/lc/R-2020.09-SP5/bin/lc_shell"
+lc_shell = "power/lc_shell_compat.sh"
 
 [[tapeout.sram]]
 name = "chipyard_sram_32x128"

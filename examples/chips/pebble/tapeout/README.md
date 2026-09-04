@@ -42,6 +42,9 @@ The flow uses R-2020.09-SP5 Library Compiler for SRAM Liberty-to-DB conversion
 and W-2024.09-SP1 Design Compiler for synthesis. The active Synopsys license
 service is `26000@amax`; the wrapper supplies it when
 running the flow. Set `PIVOT_SNPS_LICENSE` only when using another server.
+Because R-2020.09 depends on a libpthread symbol removed after glibc 2.33,
+`power/lc_shell_compat.sh` runs a disposable copy with the host-provided glibc
+2.31 compatibility files. The original Synopsys installation is not modified.
 
 The default activity workload is
 `pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT
