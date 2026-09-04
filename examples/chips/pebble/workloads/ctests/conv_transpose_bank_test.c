@@ -1,11 +1,12 @@
 #include "buckyball.h"
 #include <bbhw/isa/isa.h>
 #include <bbhw/mem/mem.h>
-#include <bbhw/mem/params.h>
+#include <isa/transpose.h>
+#include <params.h>
 #include <stdio.h>
 
 #define ROWS BANK_LINES
-#define COLS 16
+#define COLS (BANK_WIDTH / 8)
 #define ELEM_BITS 8
 #define SEED 0xC2
 
@@ -26,6 +27,8 @@ int main(void) {
   bb_transpose(0, 1, ROWS, ELEM_BITS);
   bb_mvout((uintptr_t)output_matrix, 1, ROWS, 1);
   bb_fence();
+  bb_mem_release(0);
+  bb_mem_release(1);
   int ok = compare_i8_matrices(output_matrix, expected_matrix, COLS, ROWS);
   printf("conv_transpose_bank %s\n", ok ? "PASS" : "FAIL");
   return ok ? 0 : 1;

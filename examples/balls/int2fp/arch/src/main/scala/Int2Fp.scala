@@ -4,353 +4,199 @@ import chisel3._
 import chisel3.util._
 import chisel3.experimental.hierarchy.{instantiable, public}
 
-import framework.balldomain.rs.{BallRsComplete, BallRsIssue}
+import examples.balls.common.Fp32Mul
 import framework.balldomain.blink.{BallStatus, BankRead, BankWrite}
+import framework.balldomain.rs.{BallRsComplete, BallRsIssue}
 import framework.top.GlobalConfig
 
 @instantiable
 class Int2Fp(val b: GlobalConfig) extends Module {
-  val bankWidth    = b.memDomain.bankWidth
-  require(bankWidth == 128, s"Int2FpBall requires bankWidth = 128, got $bankWidth")
-  val elemsPerWord = bankWidth / 32
 
-  val ballMapping = b.ballDomain.ballIdMappings.find(_.ballName == "Int2FpBall")
+  private val mapping = b.ballDomain.ballIdMappings
+    .find(_.ballName == "Int2FpBall")
     .getOrElse(throw new IllegalArgumentException("Int2FpBall not found in config"))
-  val inBW        = ballMapping.inBW
-  val outBW       = ballMapping.outBW
 
-  require(inBW >= 1, "Int2Fp requires at least one read port")
-  require(outBW >= 1, "Int2Fp requires at least one write port")
+  private val funct = b.ballDomain.ballISA
+    .find(_.mnemonic == "INT32_TO_FP32")
+    .map(_.funct7)
+    .getOrElse(throw new IllegalArgumentException("INT32_TO_FP32 not found in ballISA"))
 
-  @public
-  val io = IO(new Bundle {
+  require(b.memDomain.bankWidth == 128, "Int2FpBall requires 128-bit bank rows")
+  require(mapping.inBW == 2, "Int2FpBall requires inBW=2")
+  require(mapping.outBW == 1, "Int2FpBall requires outBW=1")
+  require((funct >> 4) == 4, "INT32_TO_FP32 must encode two reads and one write")
+
+  @public val io = IO(new Bundle {
     val cmdReq    = Flipped(Decoupled(new BallRsIssue(b)))
     val cmdResp   = Decoupled(new BallRsComplete(b))
-    val bankRead  = Vec(inBW, Flipped(new BankRead(b)))
-    val bankWrite = Vec(outBW, Flipped(new BankWrite(b)))
+    val bankRead  = Vec(mapping.inBW, Flipped(new BankRead(b)))
+    val bankWrite = Vec(mapping.outBW, Flipped(new BankWrite(b)))
     val status    = new BallStatus
   })
 
-  val idle :: sReadReq :: sReadResp :: sWriteReq :: sWriteResp :: complete :: Nil = Enum(6)
-  val state                                                                       = RegInit(idle)
+  private val idle :: readReq :: readResp :: convert :: multiply :: writeReq :: writeResp :: complete :: Nil =
+    Enum(8)
+  private val state                                                                                          = RegInit(idle)
 
-  val robIdReg    = RegInit(0.U(log2Up(b.frontend.rob_entries).W))
-  val isSubReg    = RegInit(false.B)
-  val subRobIdReg = RegInit(0.U(log2Up(b.frontend.sub_rob_depth * 4).W))
+  private val robIdReg    = RegInit(0.U(log2Up(b.frontend.rob_entries).W))
+  private val isSubReg    = RegInit(false.B)
+  private val subRobIdReg = RegInit(0.U(log2Up(b.frontend.sub_rob_depth * 4).W))
+  private val inputBank   = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
+  private val scaleBank   = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
+  private val outputBank  = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
+  private val iterReg     = RegInit(0.U(b.frontend.iter_len.W))
+  private val rowReg      = RegInit(0.U(log2Ceil(b.memDomain.bankEntries).W))
+  private val reluReg     = RegInit(false.B)
+  private val inputData   = Reg(UInt(128.W))
+  private val scaleData   = Reg(UInt(128.W))
+  private val fpOutputs   = Reg(Vec(4, UInt(32.W)))
+  private val mulStarted  = RegInit(false.B)
+  private val laneReg     = RegInit(0.U(2.W))
+  private val writeData   = Reg(UInt(128.W))
+  private val multiplier  = Module(new Fp32Mul)
 
-  val rbankReg = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
-  val wbankReg = RegInit(0.U(log2Up(b.memDomain.bankNum).W))
-  val iterReg  = RegInit(0.U(b.frontend.iter_len.W))
-  val scaleReg = RegInit(0.U(32.W))
+  private def int32ToFp32(value: UInt): UInt = {
+    val sign        = value(31)
+    val abs         = Mux(sign, (~value).asUInt + 1.U, value)
+    val zero        = abs === 0.U
+    val leading     = 31.U - PriorityEncoder(Reverse(abs))
+    val shift       = Mux(leading > 23.U, leading - 23.U, 0.U)
+    val truncated   = abs >> shift
+    val half        = Mux(shift === 0.U, 0.U(32.W), 1.U(32.W) << (shift - 1.U))
+    val remainder   = Mux(shift === 0.U, 0.U(32.W), abs & ((1.U(32.W) << shift) - 1.U))
+    val roundUp     = remainder > half || (remainder === half && truncated(0))
+    val rounded     = truncated +& roundUp.asUInt
+    val carry       = rounded(24)
+    val significand = Mux(leading > 23.U, rounded(22, 0), (abs << (23.U - leading))(22, 0))
+    val exponent    = (leading +& 127.U +& carry)(7, 0)
+    Mux(zero, 0.U, Cat(sign, exponent, Mux(carry, 0.U(23.W), significand)))
+  }
 
-  val rowReg       = RegInit(0.U(b.frontend.iter_len.W))
-  val groupReg     = RegInit(0.U(2.W))
-  val lastGroupReg = RegInit(0.U(2.W))
-  val modeI8ToFp   = RegInit(false.B)
-  val modeI32Group = RegInit(false.B)
-  val modeI32ToI8  = RegInit(false.B)
-  val srcWord      = RegInit(0.U(bankWidth.W))
-  val outWord      = RegInit(0.U(bankWidth.W))
-  val writeWord    = RegInit(0.U(bankWidth.W))
+  private def positiveFinite(value: UInt): Bool =
+    !value(31) && value(30, 23) =/= 255.U && value(30, 0) =/= 0.U
 
-  for (i <- 0 until inBW) {
+  for (i <- 0 until mapping.inBW) {
     io.bankRead(i).rob_id           := robIdReg
     io.bankRead(i).ball_id          := 0.U
-    io.bankRead(i).bank_id          := rbankReg
+    io.bankRead(i).bank_id          := Mux(i.U === 0.U, inputBank, scaleBank)
     io.bankRead(i).group_id         := 0.U
     io.bankRead(i).io.req.valid     := false.B
-    io.bankRead(i).io.req.bits.addr := 0.U
+    io.bankRead(i).io.req.bits.addr := Mux(i.U === 0.U, rowReg, rowReg(1, 0))
     io.bankRead(i).io.resp.ready    := false.B
   }
-  for (i <- 0 until outBW) {
-    io.bankWrite(i).rob_id           := robIdReg
-    io.bankWrite(i).ball_id          := 0.U
-    io.bankWrite(i).bank_id          := wbankReg
-    io.bankWrite(i).group_id         := 0.U
-    io.bankWrite(i).io.req.valid     := false.B
-    io.bankWrite(i).io.req.bits.addr := 0.U
-    io.bankWrite(i).io.req.bits.data := 0.U
-    io.bankWrite(i).io.req.bits.mask := VecInit(Seq.fill(b.memDomain.bankMaskLen)(false.B))
-    io.bankWrite(i).io.resp.ready    := false.B
-  }
+  io.bankWrite(0).rob_id := robIdReg
+  io.bankWrite(0).ball_id          := 0.U
+  io.bankWrite(0).bank_id          := outputBank
+  io.bankWrite(0).group_id         := 0.U
+  io.bankWrite(0).io.req.valid     := false.B
+  io.bankWrite(0).io.req.bits.addr := rowReg
+  io.bankWrite(0).io.req.bits.data := writeData
+  io.bankWrite(0).io.req.bits.mask := VecInit(Seq.fill(b.memDomain.bankMaskLen)(true.B))
+  io.bankWrite(0).io.resp.ready    := false.B
+
+  private val inputValue = (inputData >> (laneReg << 5))(31, 0)
+  private val scaleValue = (scaleData >> (laneReg << 5))(31, 0)
+  multiplier.io.start := false.B
+  multiplier.io.a     := int32ToFp32(Mux(reluReg && inputValue(31), 0.U, inputValue))
+  multiplier.io.b     := scaleValue
 
   io.cmdReq.ready            := state === idle
   io.cmdResp.valid           := state === complete
   io.cmdResp.bits.rob_id     := robIdReg
   io.cmdResp.bits.is_sub     := isSubReg
   io.cmdResp.bits.sub_rob_id := subRobIdReg
-
-  def int32ToFp32(intVal: UInt): UInt = {
-    val signed = intVal.asSInt
-    val isZero = signed === 0.S
-    val sign   = intVal(31)
-    val absVal = Wire(UInt(32.W))
-    absVal := Mux(sign.asBool, ~intVal + 1.U, intVal)
-
-    val leadingOne = 31.U - PriorityEncoder(Reverse(absVal))
-    val exponent   = Wire(UInt(9.W))
-    val significand = Wire(UInt(24.W))
-
-    exponent := leadingOne +& 127.U
-    when(leadingOne > 23.U) {
-      val rightShift = leadingOne - 23.U
-      val absWide    = Cat(0.U(32.W), absVal)
-      val truncated  = absWide >> rightShift
-      val half       = 1.U(64.W) << (rightShift - 1.U)
-      val remainder  = absWide & ((1.U(64.W) << rightShift) - 1.U)
-      val roundUp    = remainder > half || (remainder === half && truncated(0))
-      val rounded    = truncated(23, 0) +& roundUp.asUInt
-      significand := Mux(rounded(24), rounded(24, 1), rounded(23, 0))
-      when(rounded(24)) {
-        exponent := leadingOne +& 128.U
-      }
-    }.otherwise {
-      significand := (absVal << (23.U - leadingOne))(23, 0)
-    }
-
-    val result = Wire(UInt(32.W))
-    when(isZero) {
-      result := 0.U
-    }.otherwise {
-      result := Cat(sign, exponent(7, 0), significand(22, 0))
-    }
-    result
-  }
-
-  def fp32Multiply(a: UInt, bv: UInt): UInt = {
-    val aSign      = a(31)
-    val bSign      = bv(31)
-    val aExp       = a(30, 23)
-    val bExp       = bv(30, 23)
-    val aMant      = Cat(1.U(1.W), a(22, 0))
-    val bMant      = Cat(1.U(1.W), bv(22, 0))
-    val resSign    = aSign ^ bSign
-    val aZero      = aExp === 0.U && a(22, 0) === 0.U
-    val bZero      = bExp === 0.U && bv(22, 0) === 0.U
-    val prod       = (aMant * bMant)(47, 0)
-    val sig        = Wire(UInt(24.W))
-    val guard      = Wire(Bool())
-    val round      = Wire(Bool())
-    val sticky     = Wire(Bool())
-    val normAdjust = Wire(UInt(2.W))
-    when(prod(47)) {
-      sig        := prod(47, 24)
-      guard      := prod(23)
-      round      := prod(22)
-      sticky     := prod(21, 0).orR
-      normAdjust := 1.U
-    }.otherwise {
-      sig        := prod(46, 23)
-      guard      := prod(22)
-      round      := prod(21)
-      sticky     := prod(20, 0).orR
-      normAdjust := 0.U
-    }
-    val inc        = guard && (round || sticky || sig(0))
-    val rounded    = sig +& inc.asUInt
-    val finalSig   = Mux(rounded(24), rounded(24, 1), rounded(23, 0))
-    val expWide    = aExp +& bExp +& normAdjust +& rounded(24) - 127.U
-    val result     = Wire(UInt(32.W))
-    when(aZero || bZero) {
-      result := 0.U
-    }.elsewhen(expWide(9, 8) =/= 0.U && expWide(9)) {
-      result := 0.U
-    }.elsewhen(expWide(8) && !expWide(9)) {
-      result := Cat(resSign, 255.U(8.W), 0.U(23.W))
-    }.otherwise {
-      result := Cat(resSign, expWide(7, 0), finalSig(22, 0))
-    }
-    result
-  }
-
-  def scaledI32Word(data: UInt): UInt = {
-    val out = Wire(Vec(elemsPerWord, UInt(32.W)))
-    for (i <- 0 until elemsPerWord) {
-      val elem = data((i + 1) * 32 - 1, i * 32)
-      out(i) := fp32Multiply(int32ToFp32(elem), scaleReg)
-    }
-    Cat(out.reverse)
-  }
-
-  def scaledI8Word(data: UInt, group: UInt): UInt = {
-    val out = Wire(Vec(elemsPerWord, UInt(32.W)))
-    for (i <- 0 until elemsPerWord) {
-      val idx  = group * 4.U + i.U
-      val byte = (data >> (idx << 3.U))(7, 0)
-      val sx   = Cat(Fill(24, byte(7)), byte)
-      out(i) := fp32Multiply(int32ToFp32(sx), scaleReg)
-    }
-    Cat(out.reverse)
-  }
-
-  def fp32ToInt32(fp: UInt): UInt = {
-    val sign         = fp(31)
-    val exponent     = fp(30, 23)
-    val fraction     = fp(22, 0)
-    val mantissa     = Mux(exponent === 0.U, Cat(0.U(1.W), fraction), Cat(1.U(1.W), fraction))
-    val mantissaWide = Cat(0.U(40.W), mantissa)
-    val expVal       = exponent.zext - 127.S
-    val magnitude    = Wire(UInt(64.W))
-
-    magnitude := 0.U
-    when(expVal >= 31.S) {
-      magnitude := "h80000000".U
-    }.elsewhen(expVal >= 23.S) {
-      magnitude := mantissaWide << (expVal - 23.S).asUInt
-    }.elsewhen(expVal >= -1.S) {
-      val rightShift = (23.S - expVal).asUInt
-      val truncated  = mantissaWide >> rightShift
-      val half       = 1.U(64.W) << (rightShift - 1.U)
-      val remainder  = mantissaWide & ((1.U(64.W) << rightShift) - 1.U)
-      val roundUp    = remainder > half || (remainder === half && truncated(0))
-      magnitude := truncated + roundUp.asUInt
-    }
-
-    val result = Wire(SInt(32.W))
-    when(exponent === 255.U && fraction =/= 0.U) {
-      result := 0.S
-    }.elsewhen(sign.asBool) {
-      result := Mux(
-        magnitude >= "h80000000".U,
-        -2147483648L.S(32.W),
-        -magnitude(31, 0).asSInt
-      )
-    }.otherwise {
-      result := Mux(magnitude > "h7fffffff".U, 2147483647.S(32.W), magnitude(31, 0).asSInt)
-    }
-    result.asUInt
-  }
-
-  def requantI32Bytes(data: UInt): UInt = {
-    val out = Wire(Vec(elemsPerWord, UInt(8.W)))
-    for (i <- 0 until elemsPerWord) {
-      val elem   = data((i + 1) * 32 - 1, i * 32)
-      val scaled = fp32Multiply(int32ToFp32(elem), scaleReg)
-      val value  = fp32ToInt32(scaled).asSInt
-      out(i) := Mux(value > 127.S, 127.S(8.W), Mux(value < -128.S, -128.S(8.W), value(7, 0).asSInt)).asUInt
-    }
-    Cat(out.reverse)
-  }
+  io.status.idle             := state === idle
+  io.status.running          := state =/= idle && state =/= complete
 
   switch(state) {
     is(idle) {
       when(io.cmdReq.fire) {
-        val srcCol       = io.cmdReq.bits.cmd.op1_col
-        val dstCol       = io.cmdReq.bits.cmd.wr_col
-        val outputMode   = io.cmdReq.bits.cmd.special(33, 32)
-        val outputFp32   = outputMode === 0.U
-        val outputInt8   = outputMode === 1.U
-        val isI32Single  = outputFp32 && srcCol === 1.U && dstCol === 1.U
-        val isI8ToFp     = outputFp32 && srcCol === 1.U && dstCol === 4.U
-        val isI32Group   = outputFp32 && srcCol === dstCol && (srcCol === 2.U || srcCol === 4.U)
-        val isI32ToInt8  = outputInt8 && srcCol === 4.U && dstCol === 1.U
+        val cmd = io.cmdReq.bits.cmd
+        assert(cmd.funct7 === funct.U, "Int2FpBall received an unknown funct7")
+        assert(cmd.iter > 0.U && cmd.iter(1, 0) === 0.U, "INT32_TO_FP32 iter must be a positive multiple of four")
+        assert(cmd.iter <= b.memDomain.bankEntries.U, "INT32_TO_FP32 input exceeds bank depth")
+        assert(
+          cmd.op1_col === 1.U && cmd.op2_col === 1.U && cmd.wr_col === 1.U,
+          "INT32_TO_FP32 operands must each occupy one bank"
+        )
+        assert(
+          cmd.op1_bank =/= cmd.op2_bank && cmd.op1_bank =/= cmd.wr_bank && cmd.op2_bank =/= cmd.wr_bank,
+          "INT32_TO_FP32 banks must be distinct"
+        )
+        assert(cmd.rs2(63, 1) === 0.U, "INT32_TO_FP32 reserves rs2[63:1]")
 
-        assert(io.cmdReq.bits.cmd.iter > 0.U, "Int2Fp iter must be > 0")
-        assert(outputMode <= 1.U, "Int2Fp reserved output mode")
-        assert(isI32Single || isI8ToFp || isI32Group || isI32ToInt8, "Int2Fp unsupported mode/layout")
-
-        robIdReg     := io.cmdReq.bits.rob_id
-        isSubReg     := io.cmdReq.bits.is_sub
-        subRobIdReg  := io.cmdReq.bits.sub_rob_id
-        rbankReg     := io.cmdReq.bits.cmd.op1_bank
-        wbankReg     := io.cmdReq.bits.cmd.wr_bank
-        iterReg      := io.cmdReq.bits.cmd.iter
-        scaleReg     := io.cmdReq.bits.cmd.special(31, 0)
-        rowReg       := 0.U
-        groupReg     := 0.U
-        lastGroupReg := srcCol - 1.U
-        modeI8ToFp   := isI8ToFp
-        modeI32Group := isI32Group
-        modeI32ToI8  := isI32ToInt8
-        srcWord      := 0.U
-        outWord      := 0.U
-        writeWord    := 0.U
-        state        := sReadReq
+        robIdReg    := io.cmdReq.bits.rob_id
+        isSubReg    := io.cmdReq.bits.is_sub
+        subRobIdReg := io.cmdReq.bits.sub_rob_id
+        inputBank   := cmd.op1_bank
+        scaleBank   := cmd.op2_bank
+        outputBank  := cmd.wr_bank
+        iterReg     := cmd.iter
+        rowReg      := 0.U
+        reluReg     := cmd.rs2(0)
+        state       := readReq
       }
     }
-
-    is(sReadReq) {
-      io.bankRead(0).bank_id          := rbankReg
-      io.bankRead(0).group_id         := Mux(modeI32Group || modeI32ToI8, groupReg, 0.U)
-      io.bankRead(0).io.req.valid     := true.B
-      io.bankRead(0).io.req.bits.addr := rowReg
-      when(io.bankRead(0).io.req.fire) {
-        state := sReadResp
+    is(readReq) {
+      for (i <- 0 until mapping.inBW) io.bankRead(i).io.req.valid := true.B
+      when(io.bankRead.map(_.io.req.fire).reduce(_ && _)) {
+        state := readResp
       }
     }
-
-    is(sReadResp) {
-      io.bankRead(0).bank_id       := rbankReg
-      io.bankRead(0).group_id      := Mux(modeI32Group || modeI32ToI8, groupReg, 0.U)
-      io.bankRead(0).io.resp.ready := true.B
-      when(io.bankRead(0).io.resp.fire) {
-        when(modeI8ToFp) {
-          srcWord   := io.bankRead(0).io.resp.bits.data
-          writeWord := scaledI8Word(io.bankRead(0).io.resp.bits.data, 0.U)
-          groupReg  := 0.U
-          state     := sWriteReq
-        }.elsewhen(modeI32ToI8) {
-          val bytes    = requantI32Bytes(io.bankRead(0).io.resp.bits.data)
-          val nextWord = outWord | (bytes << (groupReg << 5.U))
-          when(groupReg === 3.U) {
-            writeWord := nextWord
-            groupReg  := 0.U
-            outWord   := 0.U
-            state     := sWriteReq
-          }.otherwise {
-            outWord  := nextWord
-            groupReg := groupReg + 1.U
-            state    := sReadReq
-          }
+    is(readResp) {
+      for (i <- 0 until mapping.inBW) io.bankRead(i).io.resp.ready := true.B
+      when(io.bankRead.map(_.io.resp.fire).reduce(_ && _)) {
+        inputData := io.bankRead(0).io.resp.bits.data
+        scaleData := io.bankRead(1).io.resp.bits.data
+        state     := convert
+      }
+    }
+    is(convert) {
+      for (i <- 0 until 4) {
+        val scale = scaleData(32 * i + 31, 32 * i)
+        assert(positiveFinite(scale), "INT32_TO_FP32 scales must be finite and positive")
+      }
+      mulStarted := false.B
+      laneReg := 0.U
+      state   := multiply
+    }
+    is(multiply) {
+      when(!mulStarted) {
+        multiplier.io.start := true.B
+        mulStarted          := true.B
+      }
+      when(multiplier.io.done) {
+        fpOutputs(laneReg) := multiplier.io.result
+        when(laneReg === 3.U) {
+          writeData := Cat(multiplier.io.result, fpOutputs(2), fpOutputs(1), fpOutputs(0))
+          state     := writeReq
         }.otherwise {
-          writeWord := scaledI32Word(io.bankRead(0).io.resp.bits.data)
-          state     := sWriteReq
+          laneReg    := laneReg + 1.U
+          mulStarted := false.B
         }
       }
     }
-
-    is(sWriteReq) {
-      io.bankWrite(0).bank_id          := wbankReg
-      io.bankWrite(0).group_id         := Mux(modeI8ToFp || modeI32Group, groupReg, 0.U)
-      io.bankWrite(0).io.req.valid     := true.B
-      io.bankWrite(0).io.req.bits.addr := rowReg
-      io.bankWrite(0).io.req.bits.data := writeWord
-      io.bankWrite(0).io.req.bits.mask := VecInit(Seq.fill(b.memDomain.bankMaskLen)(true.B))
+    is(writeReq) {
+      io.bankWrite(0).io.req.valid := true.B
       when(io.bankWrite(0).io.req.fire) {
-        state := sWriteResp
+        state := writeResp
       }
     }
-
-    is(sWriteResp) {
-      io.bankWrite(0).bank_id       := wbankReg
-      io.bankWrite(0).group_id      := Mux(modeI8ToFp || modeI32Group, groupReg, 0.U)
+    is(writeResp) {
       io.bankWrite(0).io.resp.ready := true.B
       when(io.bankWrite(0).io.resp.fire) {
-        when(modeI8ToFp && groupReg =/= 3.U) {
-          groupReg  := groupReg + 1.U
-          writeWord := scaledI8Word(srcWord, groupReg + 1.U)
-          state     := sWriteReq
-        }.elsewhen(modeI32Group && groupReg =/= lastGroupReg) {
-          groupReg := groupReg + 1.U
-          state    := sReadReq
-        }.elsewhen(rowReg === iterReg - 1.U) {
+        when(rowReg === iterReg - 1.U) {
           state := complete
         }.otherwise {
-          rowReg   := rowReg + 1.U
-          groupReg := 0.U
-          outWord  := 0.U
-          state    := sReadReq
+          rowReg := rowReg + 1.U
+          state  := readReq
         }
       }
     }
-
     is(complete) {
       when(io.cmdResp.fire) {
         state := idle
       }
     }
   }
-
-  io.status.idle    := state === idle
-  io.status.running := state =/= idle && state =/= complete
 }

@@ -1,24 +1,20 @@
 #ifndef BBHW_MMIO_ALLOCATOR_H
 #define BBHW_MMIO_ALLOCATOR_H
 
+#include <params.h>
 #include <stddef.h>
 #include <stdint.h>
 
-// Default MMIO subsystem layout (must mirror MMIO config in hardware
-// default.json):
-//   16 banks x 64 entries x 128 bit = 16 KB total
-#define MMIO_BANK_NUM 16
-#define MMIO_BANK_ENTRIES 64
-#define MMIO_BANK_WIDTH_BITS 128
-#define MMIO_BANK_BYTES                                                        \
-  ((MMIO_BANK_ENTRIES) * ((MMIO_BANK_WIDTH_BITS) / 8))         // 1024
-#define MMIO_TOTAL_BYTES ((MMIO_BANK_NUM) * (MMIO_BANK_BYTES)) // 16384
-#define MMIO_BANK_BASE(i) ((i) * (MMIO_BANK_BYTES))
+#define MMIO_BANK_BYTES ((MMIO_BANK_ENTRIES) * ((MMIO_BANK_WIDTH_BITS) / 8))
+#define MMIO_TOTAL_BYTES ((MMIO_BANK_NUM) * (MMIO_BANK_BYTES))
+#define MMIO_LOGICAL_ROW_BYTES ((BANK_WIDTH) / 8)
+#define MMIO_LOGICAL_ROWS ((MMIO_TOTAL_BYTES) / (MMIO_LOGICAL_ROW_BYTES))
+_Static_assert((MMIO_TOTAL_BYTES) % (MMIO_LOGICAL_ROW_BYTES) == 0,
+               "MMIO bytes must be a multiple of SRAM row bytes");
 
-// Bitmap-based allocator: one bit per row in each bank.
-// 16 banks x 64 rows = 1024 bits = 16 uint64_t words.
+// Bitmap-based allocator over the unified logical address space.
 typedef struct {
-  uint64_t bitmap[MMIO_BANK_NUM]; // bitmap[i] bit j = row j of bank i used
+  uint8_t bitmap[MMIO_LOGICAL_ROWS];
 } mmio_allocator_t;
 
 // Initialize allocator (all rows free).

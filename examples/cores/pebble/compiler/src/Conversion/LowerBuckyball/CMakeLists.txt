@@ -2,20 +2,23 @@ add_mlir_library(${BB_CORE_TARGET_PREFIX}LowerBuckyballPass
   ${BB_COMPILER_COMMON_DIR}/Conversion/LowerBuckyball/BaseAssignPhysicalBankPatterns.cpp
   ${BB_COMPILER_COMMON_DIR}/Conversion/LowerBuckyball/PhysicalBankState.cpp
   ${BB_COMPILER_COMMON_DIR}/Conversion/LowerBuckyball/ReportBankUsagePass.cpp
-  ${BB_REPO_ROOT}/examples/balls/transpose/compiler/src/Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp
-  ${BB_REPO_ROOT}/examples/balls/matrix/compiler/src/Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp
-  ${BB_REPO_ROOT}/examples/balls/im2col/compiler/src/Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp
-  ${BB_REPO_ROOT}/examples/balls/fp2int/compiler/src/Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp
-  ${BB_REPO_ROOT}/examples/balls/int2fp/compiler/src/Conversion/LowerBuckyball/AssignPhysicalBankPatterns.cpp
-  AssignPhysicalBanksPass.cpp
+  ${BB_COMPILER_COMMON_DIR}/Conversion/LowerBuckyball/AssignPhysicalBanksPass.cpp
+  ${BB_COMPILER_COMMON_DIR}/Conversion/LowerBuckyball/ReportCycleEstimatePass.cpp
+  ${BB_assign_SOURCES}
+  ${BB_REPO_ROOT}/examples/balls/smatmul/compiler/src/Conversion/LowerBuckyball/LowerBuckyballToBankSSAPatterns.cpp
+  CoreBankSSALowering.cpp
   LowerBuckyballPass.cpp
   LowerBuckyballToBankSSAPass.cpp
-  MatrixMatmulToBankSSAPatterns.cpp
-  Im2colMatmulToBankSSAPatterns.cpp
+  MegaKernelToBankSSAPatterns.cpp
+  ResidentConvRegionToBankSSAPatterns.cpp
+  PointConvRegionToBankSSAPatterns.cpp
+  MegaConv2dToBankSSAPatterns.cpp
   MemTransposeToBankSSAPatterns.cpp
+  QuantizeTensorToBankSSAPatterns.cpp
 
   LINK_LIBS PUBLIC
   ${BB_CORE_TARGET_PREFIX}BuddyBuckyballTransforms
+  ${BB_CORE_TARGET_PREFIX}LowerTileToBuckyballPass
 )
 
 # CMake's archive rule appends members, so a chip switch can retain stale

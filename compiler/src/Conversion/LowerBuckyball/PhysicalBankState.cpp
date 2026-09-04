@@ -15,7 +15,7 @@ PhysicalBankState::PhysicalBankState(int64_t bankNum)
     : bankNum(bankNum), used(bankNum, 0) {}
 
 std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
-  for (unsigned depth = 0; depth != 16; ++depth) {
+  while (true) {
     if (auto cst = value.getDefiningOp<arith::ConstantOp>()) {
       auto attr = dyn_cast<IntegerAttr>(cst.getValue());
       if (!attr)
@@ -30,37 +30,51 @@ std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
       value = op.getBank();
       continue;
     }
-    if (auto op = value.getDefiningOp<BankTransposeOp>()) {
-      value = op.getOutBank();
-      continue;
-    }
-    if (auto op = value.getDefiningOp<BankFp2IntOp>()) {
-      value = op.getOutBank();
-      continue;
-    }
-    if (auto op = value.getDefiningOp<BankInt2FpOp>()) {
-      value = op.getOutBank();
-      continue;
-    }
-    if (auto op = value.getDefiningOp<BankInt32ToInt8Op>()) {
-      value = op.getOutBank();
-      continue;
-    }
-    // Im2col is an optional Ball. Keep the generic allocator independent of
-    // its generated C++ type so a Core can omit that dialect entirely.
-    if (Operation *op = value.getDefiningOp();
-        op && op->getName().getStringRef() == "buckyball.bank_im2col") {
-      value = op->getResult(0);
-      continue;
-    }
-    if (auto op = value.getDefiningOp<BankMatrixOp>()) {
-      value = op.getWrBank();
-      continue;
-    }
-    if (Operation *op = value.getDefiningOp();
-        op && op->getName().getStringRef() == "buckyball.bank_mul_warp16") {
-      value = op->getOperand(2);
-      continue;
+    // Optional Balls: use op names so Cores can omit generated C++ types.
+    if (Operation *op = value.getDefiningOp()) {
+      StringRef name = op->getName().getStringRef();
+      if (name == "buckyball.bank_transpose" ||
+          name == "buckyball.bank_quant_f32_to_i8") {
+        value = op->getOperand(1);
+        continue;
+      }
+      if (name == "buckyball.bank_quant_i32_to_i8") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_int32_to_fp32") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_smatmul_bias") {
+        value = op->getOperand(0);
+        continue;
+      }
+      if (name == "buckyball.bank_im2col") {
+        value = op->getOperand(1);
+        continue;
+      }
+      if (name == "buckyball.bank_lut") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_maxpool") {
+        value = op->getOperand(1);
+        continue;
+      }
+      if (name == "buckyball.bank_int8add") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_int8mul") {
+        value = op->getOperand(2);
+        continue;
+      }
+      if (name == "buckyball.bank_smatmul" ||
+          name == "buckyball.bank_vecmat16") {
+        value = op->getOperand(2);
+        continue;
+      }
     }
     if (auto forOp = value.getDefiningOp<scf::ForOp>()) {
       unsigned resultNumber = cast<OpResult>(value).getResultNumber();
@@ -77,7 +91,6 @@ std::optional<int64_t> PhysicalBankState::getConstI64(Value value) const {
     }
     return std::nullopt;
   }
-  return std::nullopt;
 }
 
 std::optional<int64_t> PhysicalBankState::tryAlloc(int64_t row, int64_t col) {

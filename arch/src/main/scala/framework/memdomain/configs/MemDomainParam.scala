@@ -37,8 +37,8 @@ object AdaptivePrefetchParam {
 /**
  * MemDomain Parameter
  *
- * Real values are injected by `TomlConfigLoader`. The no-arg `apply()` is a
- * stub used only by `GlobalConfig()` before TOML overrides land — matching
+ * Real values are injected by `ChipLoader`. The no-arg `apply()` is a
+ * stub used only by `GlobalConfig()` before bundle overrides land — matching
  * how `BallDomainParam()` returns an empty default.
  */
 case class MemDomainParam(
@@ -74,7 +74,7 @@ case class MemDomainParam(
 object MemDomainParam {
   implicit val rw: ReadWriter[MemDomainParam] = macroRW
 
-  /** Stub default; real values come from TomlConfigLoader. */
+  /** Stub default; real values come from ChipLoader. */
   def apply(): MemDomainParam = MemDomainParam(
     bankNum = 0,
     bankWidth = 0,

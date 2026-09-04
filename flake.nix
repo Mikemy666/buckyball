@@ -15,6 +15,9 @@
             overlays = [ overlay ];
             inherit system;
             config.allowUnfree = true;
+            config.permittedInsecurePackages = [
+              "openjdk-8u502-b07"
+            ];
           };
 
           defaultShell = pkgs.mkShell {
@@ -42,11 +45,13 @@
               compiler.flatbuffers
               compiler.numactl
 
-              mosoo.bun
-              mosoo.just
-              mosoo.workerd
-
               rustTools.cargoNextest
+
+              # protoc for bbdev config --install (chip.proto -> chip.pb)
+              pkgs.protobuf
+
+              pkgs.xorg-server
+              pkgs.jdk8
             ];
             shellHook = ''
               # Must run with cwd at the git checkout. Store copies from toString ./.
@@ -57,6 +62,7 @@
                 return 1 2>/dev/null || exit 1
               fi
               BB_ROOT="$PWD"
+              export DSH_HOME="$BB_ROOT/.dsh"
               if [ -d "$BB_ROOT/result/bin" ]; then
                 export PATH="$BB_ROOT/result/bin:$PATH"
               else
@@ -65,13 +71,19 @@
 
               source "$BB_ROOT/sourceme.sh"
 
-              export MINIFLARE_WORKERD_PATH="''${MINIFLARE_WORKERD_PATH:-${pkgs.mosoo.workerd}/bin/workerd}"
-
               # Verilator build acceleration: ccache via OBJCACHE
               export OBJCACHE=ccache
 
               export CUDA_HOME="${pkgs.cuda.cudatoolkit}"
               export CPATH="''${CUDA_HOME}/include''${CPATH:+:$CPATH}"
+
+              export CC="${pkgs.systemTools.clang}/bin/clang"
+              export CXX="${pkgs.systemTools.clang}/bin/clang++"
+
+              export JAVA_HOME="${pkgs.jdk17}"
+              # used by smic180
+              export S018SP_JAVA="${pkgs.jdk8}/bin/java"
+              export PATH="$JAVA_HOME/bin:${pkgs.xorg-server}/bin:$PATH"
 
               # Banner must go to stderr. stdout is reserved for MCP stdio / machine parsers.
               if [ -z "$NIX_QUIET" ]; then
@@ -82,12 +94,13 @@
                 echo "RISC-V Linux GCC: $(riscv64-unknown-linux-gnu-gcc --version 2>&1 | head -1)" >&2
                 echo "Mill: $(mill --version 2>&1 | head -1)" >&2
                 echo "Cargo: $(cargo --version 2>&1 | head -1)" >&2
-                echo "npm: $(npm --version 2>&1 | head -1)" >&2
+                echo "pnpm: $(pnpm --version 2>&1 | head -1)" >&2
+                echo "CXX: $CXX" >&2
                 echo "bbdev: $(which bbdev)" >&2
                 echo "RISCV: $RISCV" >&2
                 echo "Yosys: $(yosys --version 2>&1 | head -1)" >&2
                 echo "OpenSTA: $(sta -version 2>&1 | head -1)" >&2
-                echo "Buddy MLIR: $(which buddy-opt)" >&2
+                # echo "Buddy MLIR: $(which buddy-opt)" >&2
                 echo "===========================================================================" >&2
               fi
             '';
@@ -134,7 +147,8 @@
               # python environment
               python.python3Packages
               pkgs."pre-commit"
-              pkgs.clang-tools  # clang-format for pre-commit (language: system)
+              # clang-format for pre-commit (language: system)
+              pkgs.clang-tools
 
               # Rust toolchain
               rustTools.rustc
@@ -142,6 +156,7 @@
               rustTools.cargoNextest
               rustTools.rustfmt
               rustTools.clippy
+              rustTools.rustAnalyzer
 
               # bbdev dependencies
               bbdev.iii
@@ -192,12 +207,7 @@
               systemTools.rsync
               systemTools.nodejs
               systemTools.git
-              # systemTools.npm
-
-              # Mosoo local development tools
-              mosoo.bun
-              mosoo.just
-              mosoo.workerd
+              systemTools.pnpm
 
               # CUDA toolkit (12.8, matches host driver) + host g++-13
               cuda.cudatoolkit

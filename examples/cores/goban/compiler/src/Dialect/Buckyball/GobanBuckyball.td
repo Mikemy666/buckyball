@@ -18,9 +18,9 @@
 #define GOBAN_BUCKYBALL_OPS
 
 include "Buckyball.td"
-include "Fp2IntBall.td"
+include "ToInt8Ball.td"
 include "Int2FpBall.td"
 include "TransposeBall.td"
-include "MatrixBall.td"
+include "SMatMulBall.td"
 
 #endif // GOBAN_BUCKYBALL_OPS

@@ -4,8 +4,27 @@ import mill.define.Sources
 import mill.modules.Util
 import mill.scalalib.TestModule.ScalaTest
 import scalalib._
+import mill.javalib.JavaModule
 // support BSP
 import mill.bsp._
+
+object protoJava extends JavaModule {
+  def protoDir = T {
+    os.pwd / os.up / "bbdev" / "api" / "steps" / "config" / "scripts" / "proto"
+  }
+
+  def generatedSources = T {
+    val dir = protoDir()
+    val proto = dir / "chip.proto"
+    if (!os.exists(proto)) {
+      throw new Exception(s"missing chip.proto: $proto")
+    }
+    os.proc("protoc", s"-I$dir", s"--java_out=${T.dest}", proto).call()
+    Seq(PathRef(T.dest))
+  }
+
+  override def ivyDeps = Agg(ivy"com.google.protobuf:protobuf-java:4.35.1")
+}
 
 object buckyball extends SbtModule { m =>
   override def millSourcePath = os.pwd
@@ -22,7 +41,8 @@ object buckyball extends SbtModule { m =>
   // Add chipyard and rocket-chip dependencies
   override def moduleDeps = Seq(
     chipyard,
-    gemmini
+    gemmini,
+    protoJava
   )
 
   override def sources = T.sources {
@@ -61,7 +81,8 @@ object buckyball extends SbtModule { m =>
     ivy"org.yaml:snakeyaml:2.0",
     ivy"com.lihaoyi::sourcecode:0.3.0",
     ivy"com.lihaoyi::upickle:3.3.1",
-    ivy"tech.sparse::toml-scala:0.2.2"
+    ivy"tech.sparse::toml-scala:0.2.2",
+    ivy"com.google.protobuf:protobuf-java:3.25.3"
   )
 
   override def scalacPluginIvyDeps = Agg(
@@ -250,6 +271,18 @@ object chipyard extends SbtModule {
       .filterNot(path => Set("FireSimConfigTweaks.scala", "BridgeBinders.scala").contains(path.last.toString))
       .map(PathRef(_))
     chipyardSources ++ stageSources ++ frameworkSources
+  }
+
+  override def resources = T.sources {
+    val fwRes = os.pwd / os.up / "thirdparty" / "soc-framework" / "src" / "main" / "resources"
+    val cyRes = millSourcePath / "generators" / "chipyard" / "src" / "main" / "resources"
+    if (!os.exists(fwRes)) {
+      throw new Exception(s"missing soc-framework resources: $fwRes")
+    }
+    if (!os.exists(cyRes)) {
+      throw new Exception(s"missing chipyard resources: $cyRes")
+    }
+    Seq(PathRef(fwRes), PathRef(cyRes))
   }
 
   // Keep the Chipyard integration limited to the generators installed by download.sh.
@@ -1036,4 +1069,16 @@ object fpga_shells extends SbtModule {
     ivy"org.chipsalliance:::chisel-plugin:6.7.0"
   )
 
+}
+
+// Classic SFC MacroCompiler. Isolated from the Chisel-6 mill tree.
+object tapeout extends SbtModule {
+  override def millSourcePath =
+    os.pwd / "thirdparty" / "chipyard" / "tools" / "tapeout"
+  override def scalaVersion = "2.13.16"
+
+  override def ivyDeps = Agg(
+    ivy"edu.berkeley.cs::firrtl:1.5.6",
+    ivy"com.typesafe.play::play-json:2.9.2"
+  )
 }

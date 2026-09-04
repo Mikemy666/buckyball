@@ -2,9 +2,13 @@
 .metals/
 .motia/
 .bsp/
+.dsh/
+.cursor/
+.claude/
+.codex/
+result
 out/
 .Xil/
-result
 
 CLAUDE.local.md
 node_modules/
@@ -18,6 +22,8 @@ index.html
 *.log
 *.dot
 *.svf
+/command.log
+/dramsim3.*
 
 # Vivado / Webtalk session files (root-level)
 /vivado*.jou
@@ -47,5 +53,12 @@ log/
 scripts/docker/.last-image-tag
 ucli.key
 .worktrees/
+
+# Bazel
+/bazel-*
+/MODULE.bazel.lock
 nohup.out
 alib-52/
+lc_output.txt
+
+skills-lock.json

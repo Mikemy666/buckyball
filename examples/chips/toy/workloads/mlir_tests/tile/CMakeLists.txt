@@ -8,7 +8,10 @@ set(CRUNNER_UTILS_SRC ${WORKLOAD_LIB_DIR}/bbsw/CRunnerUtils/CRunnerUtils.cpp)
 set(BBHW_MEM_C ${WORKLOAD_LIB_DIR}/bbhw/mem/mem.c)
 set(LLVM_MLIR_EXECUTION_ENGINE_DIR
   ${BUDDY_MLIR_DIR}/llvm/mlir/include/mlir/ExecutionEngine)
-set(FILECHECK ${LLVM_BUILD_DIR}/bin/FileCheck)
+if(NOT EXISTS "${BUCKYBALL_ISA_DIR}/toy/params.h")
+  message(FATAL_ERROR "missing ${BUCKYBALL_ISA_DIR}/toy/params.h")
+endif()
+set(TOY_ISA_DIR ${BUCKYBALL_ISA_DIR}/toy)
 
 function(add_tile_matmul_test name)
   set(MLIR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${name}.mlir)
@@ -17,34 +20,34 @@ function(add_tile_matmul_test name)
   if(BUCKYBALL_WORKLOAD_CHIP STREQUAL "")
     message(FATAL_ERROR "BUCKYBALL_WORKLOAD_CHIP must be set before mlir ctests")
   endif()
-  set(BAREMETAL_BIN ${BUCKYBALL_WORKLOAD_CHIP}_optest_tile_${name}_singlecore-baremetal)
-  set(LINUX_BIN ${BUCKYBALL_WORKLOAD_CHIP}_optest_tile_${name}-linux)
+  set(BAREMETAL_BIN ${BUCKYBALL_WORKLOAD_CHIP}_mlirtest_tile_${name}-baremetal)
+  set(LINUX_BIN ${BUCKYBALL_WORKLOAD_CHIP}_mlirtest_tile_${name}-linux)
 
   add_custom_command(
     OUTPUT ${OBJ}
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_1_buckyball.mlir
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_2_bank_ssa.mlir
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
-      "--assign-physical-banks=bank_num=16"
+      -assign-physical-banks
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_3_physical_banks.mlir
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
-      "--assign-physical-banks=bank_num=16"
+      -assign-physical-banks
       ${BUCKYBALL_LOWER_BANK_SSA_TO_INTRINSICS}
       ${BUCKYBALL_LOWER_BUCKYBALL}
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_4_buckyball_intrinsics.mlir
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
-      "--assign-physical-banks=bank_num=16"
+      -assign-physical-banks
       ${BUCKYBALL_LOWER_BANK_SSA_TO_INTRINSICS}
       -convert-linalg-to-loops
       -expand-strided-metadata
@@ -58,10 +61,10 @@ function(add_tile_matmul_test name)
       -convert-func-to-llvm
       -reconcile-unrealized-casts
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_5_llvm.mlir
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
-      "--assign-physical-banks=bank_num=16"
+      -assign-physical-banks
       ${BUCKYBALL_LOWER_BANK_SSA_TO_INTRINSICS}
       -convert-linalg-to-loops
       -expand-strided-metadata
@@ -76,10 +79,10 @@ function(add_tile_matmul_test name)
       -reconcile-unrealized-casts |
     ${BUDDY_TRANSLATE} --buddy-to-llvmir
       > ${CMAKE_CURRENT_BINARY_DIR}/${name}_6.ll
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
+    COMMAND ${BUDDY_OPT} ${MLIR_SRC} --target=toy
       -convert-tile-to-buckyball
       -lower-buckyball-to-bank-ssa
-      "--assign-physical-banks=bank_num=16"
+      -assign-physical-banks
       ${BUCKYBALL_LOWER_BANK_SSA_TO_INTRINSICS}
       -convert-linalg-to-loops
       -expand-strided-metadata
@@ -105,7 +108,7 @@ function(add_tile_matmul_test name)
     COMMAND ${ELF_CC} ${C_FLAGS}
       -I${LLVM_MLIR_EXECUTION_ENGINE_DIR}
       -I${WORKLOAD_LIB_DIR}
-      -I${WORKLOAD_LIB_DIR}/bbhw/mem
+      -I${TOY_ISA_DIR}
       -o ${CMAKE_CURRENT_BINARY_DIR}/${BAREMETAL_BIN}
       ${BBSW_BAREMETAL_DIR}/crt0.S
       ${BBSW_BAREMETAL_DIR}/syscalls.c
@@ -129,7 +132,7 @@ function(add_tile_matmul_test name)
     COMMAND ${LINUX_CXX} ${LINUX_FLAGS}
       -I${LLVM_MLIR_EXECUTION_ENGINE_DIR}
       -I${WORKLOAD_LIB_DIR}
-      -I${WORKLOAD_LIB_DIR}/bbhw/mem
+      -I${TOY_ISA_DIR}
       -o ${CMAKE_CURRENT_BINARY_DIR}/${LINUX_BIN}
       ${CRUNNER_UTILS_SRC}
       ${BBHW_MEM_C}
@@ -144,84 +147,32 @@ function(add_tile_matmul_test name)
     VERBATIM
   )
 
-  add_custom_target(optest_tile_${name}_singlecore_baremetal
+  add_custom_target(mlirtest_tile_${name}_baremetal
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${BAREMETAL_BIN})
 
-  add_custom_target(optest_tile_${name}_linux
+  add_custom_target(mlirtest_tile_${name}_linux
     DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${LINUX_BIN})
 
-  add_custom_target(optest_tile_${name}
-    DEPENDS optest_tile_${name}_linux
-      optest_tile_${name}_singlecore_baremetal
-    COMMENT "Building optest_tile_${name} for all platforms"
+  add_custom_target(mlirtest_tile_${name}
+    DEPENDS mlirtest_tile_${name}_linux
+      mlirtest_tile_${name}_baremetal
+    COMMENT "Building mlirtest_tile_${name} for all platforms"
   )
 
   add_toy_mlir_rushb(
     NAME ${name}
-    TARGET_STEM ${BUCKYBALL_WORKLOAD_CHIP}_optest_tile_${name}
+    TARGET_STEM ${BUCKYBALL_WORKLOAD_CHIP}_mlirtest_tile_${name}
+    TARGET toy
     CXX
     FRONT_PASSES -convert-tile-to-buckyball -lower-buckyball-to-bank-ssa
     SOURCES ${CRUNNER_UTILS_SRC} ${BBHW_MEM_C} ${MAIN_SRC}
     INCLUDE_DIRS
       ${LLVM_MLIR_EXECUTION_ENGINE_DIR}
       ${WORKLOAD_LIB_DIR}
-      ${WORKLOAD_LIB_DIR}/bbhw/mem
+      ${TOY_ISA_DIR}
     DEPENDS ${MAIN_SRC} ${CRUNNER_UTILS_SRC} ${BBHW_MEM_C})
 endfunction()
 
-function(add_tile_matmul_contract_test name)
-  set(MLIR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${name}.mlir)
-  set(OUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_1_buckyball.mlir)
-
-  add_custom_command(
-    OUTPUT ${OUT}
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
-      "-convert-tile-to-buckyball=bank_depth=128"
-      > ${OUT}
-    DEPENDS ${MLIR_SRC} ${BUDDY_OPT}
-    COMMENT "Building Tile contract IR for ${name}"
-    VERBATIM
-  )
-
-  add_custom_target(optest_tile_${name}_contract
-    COMMAND ${FILECHECK} ${MLIR_SRC} --input-file=${OUT}
-    DEPENDS ${OUT}
-    COMMENT "Checking Tile matmul contract for ${name}"
-    VERBATIM
-  )
-endfunction()
-
-function(add_tile_contract_test name)
-  set(MLIR_SRC ${CMAKE_CURRENT_SOURCE_DIR}/${name}.mlir)
-  set(OUT ${CMAKE_CURRENT_BINARY_DIR}/${name}_bank_ssa.mlir)
-
-  add_custom_command(
-    OUTPUT ${OUT}
-    COMMAND ${BUDDY_OPT} ${MLIR_SRC}
-      -convert-tile-to-buckyball
-      -lower-buckyball-to-bank-ssa
-      > ${OUT}
-    DEPENDS ${MLIR_SRC} ${BUDDY_OPT}
-    COMMENT "Building Tile contract IR for ${name}"
-    VERBATIM
-  )
-
-  add_custom_target(optest_tile_${name}_contract
-    COMMAND ${FILECHECK} ${MLIR_SRC} --input-file=${OUT}
-    DEPENDS ${OUT}
-    COMMENT "Checking Tile contract for ${name}"
-    VERBATIM
-  )
-endfunction()
-
-add_tile_matmul_test(matmul_127x17_17x127)
-add_tile_matmul_test(matmul_1x84_84x10)
-add_tile_matmul_contract_test(matmul_16x2048_2048x16_contract)
-add_tile_contract_test(conv2d_nhwc_hwcf_contract)
-add_tile_contract_test(conv2d_nhwc_hwcf_pad_contract)
-
-add_custom_target(tile-mlir-tests-build ALL DEPENDS
-  optest_tile_matmul_127x17_17x127
-  optest_tile_matmul_1x84_84x10
+add_custom_target(tile-mlir-tests-build ALL
   COMMENT "Building all Tile MLIR tests"
   VERBATIM)

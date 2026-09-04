@@ -26,6 +26,7 @@
 #include "Buckyball/BuckyballDialect.h"
 #include "Buckyball/BuckyballOps.h"
 #include "Conversion/LowerTileToBuckyball/LowerTileToBuckyball.h"
+#include "Target/BuckyballTargetRegistry.h"
 #include "Tile/TileDialect.h"
 #include "Tile/TileOps.h"
 #include "Tile/Transform.h"
@@ -33,6 +34,13 @@
 using namespace mlir;
 using namespace ::buddy::buckyball;
 namespace tile = ::buddy::tile;
+
+namespace mlir::buddy {
+void populateSMatMulBallTileLoweringPatterns(RewritePatternSet &patterns,
+                                             int64_t bankWidthBytes,
+                                             int64_t bankDepth,
+                                             int64_t bankNum);
+} // namespace mlir::buddy
 
 namespace {
 class TileTransposeLowering : public OpRewritePattern<tile::TileTransposeOp> {
@@ -70,16 +78,6 @@ public:
   LowerTileToBuckyballPass() = default;
   LowerTileToBuckyballPass(const LowerTileToBuckyballPass &) {}
 
-  Option<int64_t> bankWidthBytes{
-      *this, "bank_width", llvm::cl::desc("Physical bank width in bytes."),
-      llvm::cl::init(16)};
-  Option<int64_t> bankDepth{*this, "bank_depth",
-                            llvm::cl::desc("Bank depth (rows per bank)."),
-                            llvm::cl::init(1024)};
-  Option<int64_t> bankNum{*this, "bank_num",
-                          llvm::cl::desc("Number of physical banks."),
-                          llvm::cl::init(20)};
-
   void getDependentDialects(DialectRegistry &registry) const override {
     registry
         .insert<tile::TileDialect, ::buddy::buckyball::BuckyballDialect,
@@ -88,6 +86,7 @@ public:
   }
 
   void runOnOperation() override {
+    const auto &targetConfig = buckyball_target::getBuckyballTarget();
     MLIRContext *context = &getContext();
     ConversionTarget target(*context);
     target.addLegalDialect<::buddy::buckyball::BuckyballDialect,
@@ -98,8 +97,9 @@ public:
     target.addIllegalOp<tile::TileTransposeOp>();
 
     RewritePatternSet patterns(context);
-    mlir::buddy::populateMatrixTileMatMulPatterns(patterns, bankWidthBytes,
-                                                  bankDepth, bankNum);
+    mlir::buddy::populateSMatMulBallTileLoweringPatterns(
+        patterns, targetConfig.bankWidthBits / 8, targetConfig.bankDepth,
+        targetConfig.bankNum);
     patterns.add<TileTransposeLowering>(context);
     if (failed(applyPartialConversion(getOperation(), target,
                                       std::move(patterns))))

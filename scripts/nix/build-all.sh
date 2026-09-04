@@ -11,6 +11,7 @@ usage() {
   echo ""
   echo "Helper script to fully initialize repository that wraps other scripts."
   echo "By default it initializes/installs things in the following order:"
+  echo "   0. Nix environment (then git submodules, using nix git)"
   echo "   1. bbdev install"
   echo "   2. Compiler installation"
   echo "   3. RTL pre-compile sources"
@@ -19,21 +20,19 @@ usage() {
   echo "   6. bebop build"
   echo "   7. verify build"
   echo "   8. pre-commit hooks installation"
+  echo "   9. register project MCP"
   echo ""
   echo "**See below for options to skip parts of the setup. Skipping parts of the setup is not guaranteed to be tested/working.**"
   echo ""
   echo "Options"
   echo "  --help -h     : Display this message"
   echo "  --skip -s N   : Skip step N in the list above. Use multiple times to skip multiple steps ('-s N -s M ...')."
-  echo "  --nv          : Enable NVPTX + CUDA runner (requires CUDA_HOME. We install CUDA in nix store, and you need to make \
-                          sure CUDA driver is installed on your system.)"
   exit "$1"
 }
 
 SKIP_LIST=()
 VERBOSE_FLAG=""
 INSTALL_IN_NIX=0
-WITH_NV=0
 
 while [ "$1" != "" ];
 do
@@ -48,8 +47,6 @@ do
       SKIP_LIST+=(${1}) ;;
     --install-in-nix)
       INSTALL_IN_NIX=1 ;;
-    --nv)
-      WITH_NV=1 ;;
     * )
       echo "Error: invalid option $1" >&2
       usage 1 ;;
@@ -80,9 +77,7 @@ function begin_step
   echo -e "${NC}"
 }
 
-${BBDIR}/scripts/nix/download.sh
-
-begin_step "0-2" "Nix environment setup"
+begin_step "0-1" "Nix environment setup"
 cd ${BBDIR}
 nix build
 if [ "${INSTALL_IN_NIX}" != "1" ]; then
@@ -90,9 +85,10 @@ if [ "${INSTALL_IN_NIX}" != "1" ]; then
   for skip in "${SKIP_LIST[@]}"; do
     SKIP_ARGS="${SKIP_ARGS} -s ${skip}"
   done
-  [ "${WITH_NV}" = "1" ] && SKIP_ARGS="${SKIP_ARGS} --nv"
   exec nix develop --command bash ${BBDIR}/scripts/nix/build-all.sh --install-in-nix ${SKIP_ARGS} ${VERBOSE_FLAG}
 fi
+
+${BBDIR}/scripts/nix/download.sh
 
 if run_step "1"; then
   begin_step "1" "bbdev install"
@@ -101,43 +97,19 @@ if run_step "1"; then
   cd ${BBDIR}/bbdev/api
   uv venv .venv --python python3 --seed
   uv pip install --python .venv/bin/python -r pyproject.toml
+
+  bbdev config --install
 fi
 
 if run_step "2"; then
   begin_step "2" "Compiler installation"
-  cd ${BBDIR}/compiler/thirdparty/buddy-mlir
-
-  cmake -G Ninja -S llvm/llvm -B llvm/build \
-    -DLLVM_ENABLE_PROJECTS="mlir;clang" \
-    -DLLVM_ENABLE_RUNTIMES="openmp" \
-    -DLLVM_TARGETS_TO_BUILD="host;RISCV$([ "${WITH_NV}" = "1" ] && echo ';NVPTX')" \
-    $([ "${WITH_NV}" = "1" ] && echo "-DMLIR_ENABLE_CUDA_RUNNER=ON -DCMAKE_CUDA_COMPILER=$CUDA_HOME/bin/nvcc -DCUDAToolkit_ROOT=$CUDA_HOME -DCMAKE_CUDA_HOST_COMPILER=$(command -v g++-13)") \
-    -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
-    -DLIBOMP_LIBFLAGS=-lrt \
-    -DCMAKE_BUILD_TYPE=RELEASE \
-    -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
-    -DPython3_EXECUTABLE="$(which python3)" \
-    -DPython_EXECUTABLE="$(which python3)"
-  ninja -C llvm/build #check-clang check-mlir check-openmp
-
-  cmake -G Ninja -S . -B build \
-    -DMLIR_DIR=$PWD/llvm/build/lib/cmake/mlir \
-    -DLLVM_DIR=$PWD/llvm/build/lib/cmake/llvm \
-    -DLLVM_ENABLE_ASSERTIONS=ON \
-    -DCMAKE_BUILD_TYPE=RELEASE \
-    -DBUDDY_MLIR_ENABLE_PYTHON_PACKAGES=ON \
-    -DBUDDY_EXTERNAL_DIALECTS_DIR=${BBDIR}/examples/cores/toy/compiler \
-    -DPython3_EXECUTABLE="$(which python3)" \
-    -DPython_EXECUTABLE="$(which python3)"
-  ninja -C build # check-buddy
+  cd ${BBDIR}
+  bbdev compiler --build '--chip toy'
 fi
 
 if run_step "3"; then
   begin_step "3" "RTL source pre-compile"
-
-  cd ${BBDIR}/arch
-  bbdev verilator --verilog '--config sims.verilator.BuckyballToyVerilatorConfig'
+  bbdev verilator --verilog '--chip toy'
 fi
 
 if run_step "4"; then
@@ -176,6 +148,12 @@ if run_step "8"; then
   pre-commit install
   # Replace with wrapper so git commit gets nix env (result/bin in PATH)
   cp "${BBDIR}/scripts/pre-commit-hook.sh" "${BBDIR}/.git/hooks/pre-commit"
+fi
+
+if run_step "9"; then
+  begin_step "9" "register project MCP and Skills"
+  bash "${BBDIR}/.agents/mcps/scripts/install.sh"
+  bash "${BBDIR}/.agents/skills/scripts/install.sh"
 fi
 
 begin_step "END" "Setup completed successfully!"

@@ -1,15 +1,17 @@
 #include "buckyball.h"
 #include <bbhw/isa/isa.h>
 #include <bbhw/mem/mem.h>
-#include <bbhw/mem/params.h>
+#include <isa/smatmul.h>
+#include <params.h>
 #include <stdio.h>
 
 /* Closer to MobileNet tile epilogue: compute, mvout, fence, bank
  * release/realloc, second mvout, fence. Hang was after ~24 tiles. */
 #define M 16
-#define N 1
+#define N 16
 #define K 16
 #define LOOPS 24
+#define OUTPUT_GROUPS 2
 
 static elem_t a[M * K] __attribute__((aligned(64)));
 static elem_t b[K * 16] __attribute__((aligned(64)));
@@ -35,16 +37,16 @@ int main(void) {
   for (int i = 0; i < LOOPS; ++i) {
     bb_mem_alloc(0, 1, 1);
     bb_mem_alloc(1, 1, 1);
-    bb_mem_alloc(2, 1, 4);
+    bb_mem_alloc(2, 1, OUTPUT_GROUPS);
     bb_mvin((uintptr_t)a, 0, M, 1);
     bb_mvin((uintptr_t)b, 1, K, 1);
     bb_mvin((uintptr_t)zero, 2, M, 1);
-    bb_matrix_mnk(0, 1, 2, M, N, K);
+    bb_smatmul_os(0, 1, 2, M, N, K, 1, 1, 0);
     bb_mvout((uintptr_t)out, 2, M, 1);
     bb_fence();
 
     bb_mem_release(2);
-    bb_mem_alloc(2, 1, 4);
+    bb_mem_alloc(2, 1, OUTPUT_GROUPS);
     bb_mvin((uintptr_t)zero, 2, M, 1);
     bb_mvout((uintptr_t)out, 2, M, 1);
     bb_fence();
