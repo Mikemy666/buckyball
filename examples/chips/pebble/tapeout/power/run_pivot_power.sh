@@ -47,8 +47,10 @@ DC_HOME="${DC_HOME:-/data0/tools/Synopsys/dc/syn/W-2024.09-SP1}"
 VCS_HOME="${VCS_HOME:-/data0/tools/Synopsys/vcs/vcs/W-2024.09-SP1}"
 PT_HOME="${PT_HOME:-/data0/tools/Synopsys/ptpx/prime/W-2024.09-SP1}"
 export DC_HOME VCS_HOME PT_HOME
-export SNPSLMD_LICENSE_FILE="${SNPSLMD_LICENSE_FILE:-27000@amax}"
-export LM_LICENSE_FILE="${LM_LICENSE_FILE:-/data0/tools/Synopsys/lic/Synopsys.dat}"
+export SNPSLMD_LICENSE_FILE="${PIVOT_SNPS_LICENSE:-26000@amax}"
+# The local license file still names the inactive 27000 service. Point generic
+# FlexNet clients at the same live server for the complete DC/VCS/PTPX flow.
+export LM_LICENSE_FILE="$SNPSLMD_LICENSE_FILE"
 export PATH="$DC_HOME/bin:$VCS_HOME/bin:$PT_HOME/bin:$PATH"
 
 # Motia workers use a local WebSocket. Do not send it through a configured

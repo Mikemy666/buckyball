@@ -38,9 +38,10 @@ wrapper automatically uses this host's installation at
 Equivalently, export `S018SP_CDK`; `SMIC180_ROOT` is also supported when the CDK
 is installed at `$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK`.
 
-The flow uses the W-2024.09-SP1 `dc_shell` for SRAM Liberty-to-DB conversion as
-well as synthesis. The older R-2020.09-SP5 `lc_shell` installed on this host is
-not compatible with the host's glibc 2.35.
+The flow uses R-2020.09-SP5 Library Compiler for SRAM Liberty-to-DB conversion
+and W-2024.09-SP1 Design Compiler for synthesis. The active Synopsys license
+service is `26000@amax`; the wrapper supplies it when
+running the flow. Set `PIVOT_SNPS_LICENSE` only when using another server.
 
 The default activity workload is
 `pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT

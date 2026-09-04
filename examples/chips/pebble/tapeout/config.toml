@@ -20,10 +20,7 @@ power_sim_script = "power/power_sim.sh"
 power_strip_path = "GatePowerHarness.dut"
 
 sram_corner = "ss"
-# The installed R-2020.09 Library Compiler requires pre-glibc-2.34 pthread
-# internals. Current Design Compiler supports the same read_lib/write_lib Tcl
-# used by the SRAM DB generator and runs on this host.
-lc_shell = "/data0/tools/Synopsys/dc/syn/W-2024.09-SP1/bin/dc_shell"
+lc_shell = "/data2/tools/lc/R-2020.09-SP5/bin/lc_shell"
 
 [[tapeout.sram]]
 name = "chipyard_sram_32x128"
