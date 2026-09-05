@@ -1,0 +1,42 @@
+diff --git a/api/steps/dc/01_area_event.step.py b/api/steps/dc/01_area_event.step.py
+--- a/api/steps/dc/01_area_event.step.py
++++ b/api/steps/dc/01_area_event.step.py
+@@ -183,12 +183,13 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
+         )
+         return
+ 
+-    await check_result(
+-        ctx,
+-        result.returncode,
+-        continue_run=False,
+-        extra_fields=extra_fields,
+-        trace_id=origin_tid,
+-    )
+     if result.returncode == 0 and input_data.get("from_power_workflow"):
+         await ctx.enqueue({"topic": "dc.sim", "data": {**input_data, "area_dir": output_dir, "chip": contract.chip, "_trace_id": origin_tid}})
++        return
++    await check_result(
++        ctx,
++        result.returncode,
++        continue_run=False,
++        extra_fields=extra_fields,
++        trace_id=origin_tid,
++    )
+diff --git a/api/steps/dc/03_sim_event.step.py b/api/steps/dc/03_sim_event.step.py
+--- a/api/steps/dc/03_sim_event.step.py
++++ b/api/steps/dc/03_sim_event.step.py
+@@ -139,5 +139,8 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
+     else:
+         error = None
++    if result.returncode == 0:
++        await ctx.enqueue({"topic": "pt.run", "data": {**input_data, "activity": activity_path, "format": activity_format, "strip_path": contract.power_strip_path, "_trace_id": origin_tid}})
++        return
+     await check_result(
+         ctx,
+         result.returncode,
+@@ -156,5 +159,3 @@ async def handler(input_data: dict, ctx: FlowContext) -> None:
+         },
+         trace_id=origin_tid,
+     )
+-    if result.returncode == 0:
+-        await ctx.enqueue({"topic": "pt.run", "data": {**input_data, "activity": activity_path, "format": activity_format, "strip_path": contract.power_strip_path, "_trace_id": origin_tid}})
