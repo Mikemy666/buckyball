@@ -51,7 +51,7 @@ export SNPSLMD_LICENSE_FILE="${PIVOT_SNPS_LICENSE:-26000@amax}"
 # The local license file still names the inactive 27000 service. Point generic
 # FlexNet clients at the same live server for the complete DC/VCS/PTPX flow.
 export LM_LICENSE_FILE="$SNPSLMD_LICENSE_FILE"
-export PATH="$DC_HOME/bin:$VCS_HOME/bin:$PT_HOME/bin:$PATH"
+export PATH="$ROOT/examples/chips/pebble/tapeout/power/pt-shell-bin:$DC_HOME/bin:$VCS_HOME/bin:$PT_HOME/bin:$PATH"
 
 # Motia workers use a local WebSocket. Do not send it through a configured
 # corporate/Codex HTTP proxy.

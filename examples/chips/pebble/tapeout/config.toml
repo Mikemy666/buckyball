@@ -17,7 +17,7 @@ power_workload = "pebble-pebble-ctest-mega_conv_pipeline_test-baremetal"
 dc_script = "area/dc.tcl"
 power_script = "power/power.tcl"
 power_sim_script = "power/power_sim.sh"
-power_strip_path = "GatePowerHarness.dut"
+power_strip_path = "GatePowerHarness/dut"
 
 sram_corner = "ss"
 lc_shell = "power/lc_shell_compat.sh"

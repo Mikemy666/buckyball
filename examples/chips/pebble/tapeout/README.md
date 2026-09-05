@@ -38,13 +38,14 @@ wrapper automatically uses this host's installation at
 Equivalently, export `S018SP_CDK`; `SMIC180_ROOT` is also supported when the CDK
 is installed at `$SMIC180_ROOT/SRAM/S018SP_v0p1pc_CDK`.
 
-The flow uses R-2020.09-SP5 Library Compiler for SRAM Liberty-to-DB conversion
-and W-2024.09-SP1 Design Compiler for synthesis. The active Synopsys license
+The flow uses R-2020.09-SP5 Library Compiler for SRAM Liberty-to-DB conversion,
+R-2020.09-SP5-5 PrimeTime PX for power analysis, and W-2024.09-SP1 Design
+Compiler/VCS for synthesis and gate simulation. The active Synopsys license
 service is `26000@amax`; the wrapper supplies it when
 running the flow. Set `PIVOT_SNPS_LICENSE` only when using another server.
 Because R-2020.09 depends on a libpthread symbol removed after glibc 2.33,
-`power/lc_shell_compat.sh` runs a disposable copy with the host-provided glibc
-2.31 compatibility files. The original Synopsys installation is not modified.
+the LC and PT compatibility launchers run disposable copies with the
+host-provided glibc 2.31 files. The original installations are not modified.
 
 The default activity workload is
 `pebble-pebble-ctest-mega_conv_pipeline_test-baremetal`. It exercises the PIVOT
@@ -61,6 +62,10 @@ is `power-reports/power_total.rpt`; use `power_hierarchy_sorted.rpt` to locate
 the largest dynamic-power contributors. SRAM activity is linked with the SRAM
 Liberty databases produced by the preceding DC stage. DRAM power remains a
 separate DRAMSim3 result and is not included in the PrimeTime cell-power total.
+The gate simulation consumes `mems.conf` and DPI models from the newest matching
+`arch/build/<chip>/sims.tapeout.*/` Mill elaboration directory and the DRAM
+simulation model from the matching `sims.verilator.*/` build. SRAM behavioral
+models are loaded from that elaboration's `ip-generate/generate_manifest.json`.
 
 The same sequence, including prerequisite and proxy checks, is available as:
 
